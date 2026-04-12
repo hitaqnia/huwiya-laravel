@@ -1,6 +1,6 @@
 <?php
 
-namespace Hawia;
+namespace Huwiya;
 
 use Illuminate\Auth\RequestGuard;
 use Illuminate\Contracts\Http\Kernel;
@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 
-class HawiaServiceProvider extends ServiceProvider
+class HuwiyaServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
@@ -37,15 +37,15 @@ class HawiaServiceProvider extends ServiceProvider
         }
 
         Route::middleware('web')->group(function () {
-            Route::get('/hawia/redirect', Http\Controllers\RedirectController::class)->name('hawia.redirect');
-            Route::get('/hawia/callback', Http\Controllers\CallbackController::class)->name('hawia.callback');
+            Route::get('/huwiya/redirect', Http\Controllers\RedirectController::class)->name('huwiya.redirect');
+            Route::get('/huwiya/callback', Http\Controllers\CallbackController::class)->name('huwiya.callback');
         });
     }
 
     protected function configureGuard(): void
     {
         Auth::resolved(function ($auth) {
-            $auth->extend('hawia-web', function ($app, $name, array $config) use ($auth) {
+            $auth->extend('huwiya-web', function ($app, $name, array $config) use ($auth) {
                 $provider = $auth->createUserProvider($config['provider'] ?? null);
 
                 return tap(
@@ -54,7 +54,7 @@ class HawiaServiceProvider extends ServiceProvider
                 );
             });
 
-            $auth->extend('hawia-api', function ($app, $name, array $config) use ($auth) {
+            $auth->extend('huwiya-api', function ($app, $name, array $config) use ($auth) {
                 return tap(
                     new RequestGuard(new ApiGuard($config['provider'] ?? null), request(), $auth->createUserProvider($config['provider'] ?? null)),
                     fn ($guard) => $app->refresh('request', $guard, 'setRequest'),

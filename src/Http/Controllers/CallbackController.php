@@ -1,10 +1,10 @@
 <?php
 
-namespace Hawia\Http\Controllers;
+namespace Huwiya\Http\Controllers;
 
-use Hawia\HasHawiaTokens;
-use Hawia\Hawia;
-use Hawia\TokenClaims;
+use Huwiya\HasHuwiyaTokens;
+use Huwiya\Huwiya;
+use Huwiya\TokenClaims;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
@@ -23,7 +23,7 @@ class CallbackController
         );
 
         if ($request->has('error')) {
-            return Hawia::denied();
+            return Huwiya::denied();
         }
 
         $http = Http::asForm();
@@ -61,12 +61,12 @@ class CallbackController
 
         throw_unless($model, RuntimeException::class, 'Unable to determine user model from auth configuration.');
         throw_unless(
-            in_array(HasHawiaTokens::class, class_uses_recursive($model)),
+            in_array(HasHuwiyaTokens::class, class_uses_recursive($model)),
             RuntimeException::class,
-            "The model [{$model}] must use the HasHawiaTokens trait."
+            "The model [{$model}] must use the HasHuwiyaTokens trait."
         );
 
-        $user = $model::findOrCreateFromHawia($claims);
+        $user = $model::findOrCreateFromHuwiya($claims);
 
         $request->session()->put(
             'login_web_'.sha1('Illuminate\Auth\SessionGuard'),

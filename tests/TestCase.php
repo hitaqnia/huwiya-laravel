@@ -1,8 +1,8 @@
 <?php
 
-namespace Hawia\Tests;
+namespace Huwiya\Tests;
 
-use Hawia\HawiaServiceProvider;
+use Huwiya\HuwiyaServiceProvider;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Orchestra\Testbench\TestCase as OrchestraTestCase;
@@ -12,7 +12,7 @@ abstract class TestCase extends OrchestraTestCase
     protected function getPackageProviders($app): array
     {
         return [
-            HawiaServiceProvider::class,
+            HuwiyaServiceProvider::class,
         ];
     }
 
@@ -38,7 +38,7 @@ abstract class TestCase extends OrchestraTestCase
         Schema::create('users', function (Blueprint $table) {
             $table->id();
             $table->string('name');
-            $table->ulid('hawia_id')->unique();
+            $table->ulid('huwiya_id')->unique();
             $table->string('phone')->unique();
             $table->timestamps();
         });

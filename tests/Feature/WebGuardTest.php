@@ -1,13 +1,13 @@
 <?php
 
-use Hawia\Tests\Fixtures\User;
-use Hawia\Hawia;
+use Huwiya\Huwiya;
+use Huwiya\Tests\Fixtures\User;
 use Illuminate\Support\Facades\Route;
 
 beforeEach(function () {
     config([
         'auth.guards.web' => [
-            'driver' => 'hawia-web',
+            'driver' => 'huwiya-web',
             'provider' => 'users',
         ],
     ]);
@@ -42,7 +42,7 @@ it('rejects unauthenticated requests', function () {
 it('supports actingAs helper for testing', function () {
     $user = User::factory()->create();
 
-    Hawia::actingAs($user, 'web');
+    Huwiya::actingAs($user, 'web');
 
     $this->getJson('/test/dashboard')
         ->assertSuccessful()

@@ -1,20 +1,20 @@
 <?php
 
-namespace Hawia;
+namespace Huwiya;
 
-trait HasHawiaTokens
+trait HasHuwiyaTokens
 {
     /**
-     * The current Hawia token claims for the authenticated user.
+     * The current Huwiya token claims for the authenticated user.
      */
-    public ?TokenClaims $hawiaToken = null;
+    public ?TokenClaims $huwiyaToken = null;
 
     /**
-     * Get the column name that stores the Hawia subject identifier.
+     * Get the column name that stores the Huwiya subject identifier.
      */
-    public function getHawiaIdentifierColumn(): string
+    public function getHuwiyaIdentifierColumn(): string
     {
-        return 'hawia_id';
+        return 'huwiya_id';
     }
 
     /**
@@ -26,11 +26,11 @@ trait HasHawiaTokens
     }
 
     /**
-     * Get the attributes to fill when creating a new user from Hawia claims.
+     * Get the attributes to fill when creating a new user from Huwiya claims.
      *
      * @return array<string, mixed>
      */
-    public function getHawiaCreateAttributes(TokenClaims $claims): array
+    public function getHuwiyaCreateAttributes(TokenClaims $claims): array
     {
         return [
             'name' => $claims->name,
@@ -39,11 +39,11 @@ trait HasHawiaTokens
     }
 
     /**
-     * Get the attributes to update on an existing user from Hawia claims.
+     * Get the attributes to update on an existing user from Huwiya claims.
      *
      * @return array<string, mixed>
      */
-    public function getHawiaUpdateAttributes(TokenClaims $claims): array
+    public function getHuwiyaUpdateAttributes(TokenClaims $claims): array
     {
         return [
             'name' => $claims->name,
@@ -52,17 +52,17 @@ trait HasHawiaTokens
     }
 
     /**
-     * Find or create a user from Hawia token claims.
+     * Find or create a user from Huwiya token claims.
      */
-    public static function findOrCreateFromHawia(TokenClaims $claims): static
+    public static function findOrCreateFromHuwiya(TokenClaims $claims): static
     {
         $instance = new static;
-        $identifier = $instance->getHawiaIdentifierColumn();
+        $identifier = $instance->getHuwiyaIdentifierColumn();
 
         $user = static::where($identifier, $claims->id)->first();
 
         if ($user !== null) {
-            $updateAttributes = $user->getHawiaUpdateAttributes($claims);
+            $updateAttributes = $user->getHuwiyaUpdateAttributes($claims);
 
             if ($updateAttributes !== []) {
                 $user->update($updateAttributes);
@@ -77,17 +77,17 @@ trait HasHawiaTokens
 
         return static::create([
             $identifier => $claims->id,
-            ...$instance->getHawiaCreateAttributes($claims),
+            ...$instance->getHuwiyaCreateAttributes($claims),
         ]);
     }
 
     /**
-     * Find a user by Hawia subject identifier.
+     * Find a user by Huwiya subject identifier.
      */
-    public static function findByHawiaId(string $id): ?static
+    public static function findByHuwiyaId(string $id): ?static
     {
         $instance = new static;
 
-        return static::where($instance->getHawiaIdentifierColumn(), $id)->first();
+        return static::where($instance->getHuwiyaIdentifierColumn(), $id)->first();
     }
 }

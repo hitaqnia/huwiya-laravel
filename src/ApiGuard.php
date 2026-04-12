@@ -1,6 +1,6 @@
 <?php
 
-namespace Hawia;
+namespace Huwiya;
 
 use Illuminate\Http\Request;
 
@@ -24,7 +24,7 @@ class ApiGuard
             return null;
         }
 
-        $claims = Hawia::decodeAndVerifyToken($token);
+        $claims = Huwiya::decodeAndVerifyToken($token);
 
         if ($claims === null) {
             return null;
@@ -36,13 +36,13 @@ class ApiGuard
             return null;
         }
 
-        if (! in_array(HasHawiaTokens::class, class_uses_recursive($model))) {
+        if (! in_array(HasHuwiyaTokens::class, class_uses_recursive($model))) {
             return null;
         }
 
-        $user = $model::findOrCreateFromHawia($claims);
+        $user = $model::findOrCreateFromHuwiya($claims);
 
-        $user->hawiaToken = $claims;
+        $user->huwiyaToken = $claims;
 
         return $user;
     }

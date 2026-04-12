@@ -1,6 +1,6 @@
 <?php
 
-use Hawia\Tests\Fixtures\User;
+use Huwiya\Tests\Fixtures\User;
 use Illuminate\Support\Facades\Http;
 
 beforeEach(function () {
@@ -8,17 +8,17 @@ beforeEach(function () {
         'huwiya.url' => 'https://idp.example.com',
         'huwiya.client_id' => 'test-client-id',
         'huwiya.client_secret' => 'test-client-secret',
-        'huwiya.redirect_uri' => 'https://app.test/hawia/callback',
+        'huwiya.redirect_uri' => 'https://app.test/huwiya/callback',
         'huwiya.web_guard' => 'web',
         'auth.guards.web' => [
-            'driver' => 'hawia-web',
+            'driver' => 'huwiya-web',
             'provider' => 'users',
         ],
     ]);
 });
 
 it('redirects to the IdP authorization endpoint', function () {
-    $response = $this->get('/hawia/redirect');
+    $response = $this->get('/huwiya/redirect');
 
     $response->assertRedirect();
 
@@ -30,7 +30,7 @@ it('redirects to the IdP authorization endpoint', function () {
 });
 
 it('stores state in the session during redirect', function () {
-    $this->get('/hawia/redirect');
+    $this->get('/huwiya/redirect');
 
     expect(session('state'))->not->toBeNull()
         ->and(session('state'))->toHaveLength(40);
@@ -51,11 +51,11 @@ it('exchanges code for token and creates a new user', function () {
     ]);
 
     $response = $this->withSession(['state' => 'valid-state'])
-        ->get('/hawia/callback?code=auth-code&state=valid-state');
+        ->get('/huwiya/callback?code=auth-code&state=valid-state');
 
     $response->assertRedirect('/');
     $this->assertDatabaseHas('users', [
-        'hawia_id' => 'new-user-id',
+        'huwiya_id' => 'new-user-id',
         'name' => 'John Doe',
         'phone' => '+1234567890',
     ]);
@@ -63,7 +63,7 @@ it('exchanges code for token and creates a new user', function () {
 
 it('updates an existing user on callback', function () {
     $user = User::factory()->create([
-        'hawia_id' => 'existing-user-id',
+        'huwiya_id' => 'existing-user-id',
         'name' => 'Old Name',
     ]);
 
@@ -81,25 +81,25 @@ it('updates an existing user on callback', function () {
     ]);
 
     $this->withSession(['state' => 'valid-state'])
-        ->get('/hawia/callback?code=auth-code&state=valid-state');
+        ->get('/huwiya/callback?code=auth-code&state=valid-state');
 
     expect($user->fresh()->name)->toBe('Updated Name');
 });
 
 it('rejects callback with invalid state', function () {
     $this->withSession(['state' => 'correct-state'])
-        ->get('/hawia/callback?code=auth-code&state=wrong-state')
+        ->get('/huwiya/callback?code=auth-code&state=wrong-state')
         ->assertStatus(500);
 });
 
 it('rejects callback with missing state', function () {
-    $this->get('/hawia/callback?code=auth-code&state=any')
+    $this->get('/huwiya/callback?code=auth-code&state=any')
         ->assertStatus(500);
 });
 
 it('handles authorization denial from IdP', function () {
     $response = $this->withSession(['state' => 'valid-state'])
-        ->get('/hawia/callback?error=access_denied&state=valid-state');
+        ->get('/huwiya/callback?error=access_denied&state=valid-state');
 
     $response->assertRedirect('/');
 });
@@ -121,7 +121,7 @@ it('sends client credentials via HTTP Basic Auth by default', function () {
     ]);
 
     $this->withSession(['state' => 'valid-state'])
-        ->get('/hawia/callback?code=auth-code&state=valid-state');
+        ->get('/huwiya/callback?code=auth-code&state=valid-state');
 
     Http::assertSent(function ($request) {
         return $request->hasHeader('Authorization')
@@ -147,7 +147,7 @@ it('sends client credentials in body when auth_method is body', function () {
     ]);
 
     $this->withSession(['state' => 'valid-state'])
-        ->get('/hawia/callback?code=auth-code&state=valid-state');
+        ->get('/huwiya/callback?code=auth-code&state=valid-state');
 
     Http::assertSent(function ($request) {
         return str_contains($request->body(), 'client_secret=test-client-secret')
@@ -172,7 +172,7 @@ it('redirects to intended URL after login', function () {
     $response = $this->withSession([
         'state' => 'valid-state',
         'url.intended' => '/dashboard',
-    ])->get('/hawia/callback?code=auth-code&state=valid-state');
+    ])->get('/huwiya/callback?code=auth-code&state=valid-state');
 
     $response->assertRedirect('/dashboard');
 });

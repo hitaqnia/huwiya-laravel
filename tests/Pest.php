@@ -1,6 +1,6 @@
 <?php
 
-use Hawia\Tests\TestCase;
+use Huwiya\Tests\TestCase;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 
@@ -104,7 +104,7 @@ function seedTestJwksCache(): void
     $keys = getTestRsaKeys();
     $details = openssl_pkey_get_details(openssl_pkey_get_public($keys['public']));
 
-    Cache::put('hawia:jwks', [
+    Cache::put('huwiya:jwks', [
         'keys' => [
             [
                 'kty' => 'RSA',

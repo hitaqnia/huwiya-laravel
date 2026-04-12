@@ -1,6 +1,6 @@
 <?php
 
-use Hawia\TokenClaims;
+use Huwiya\TokenClaims;
 
 it('creates claims from array', function () {
     $claims = TokenClaims::fromArray([

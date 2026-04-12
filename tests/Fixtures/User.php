@@ -1,14 +1,14 @@
 <?php
 
-namespace Hawia\Tests\Fixtures;
+namespace Huwiya\Tests\Fixtures;
 
-use Hawia\HasHawiaTokens;
+use Huwiya\HasHuwiyaTokens;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 
 class User extends Authenticatable
 {
-    use HasFactory, HasHawiaTokens;
+    use HasFactory, HasHuwiyaTokens;
 
-    protected $fillable = ['name', 'hawia_id', 'phone'];
+    protected $fillable = ['name', 'huwiya_id', 'phone'];
 }

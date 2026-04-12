@@ -1,6 +1,6 @@
 <?php
 
-use Hawia\Tests\Fixtures\User;
+use Huwiya\Tests\Fixtures\User;
 use Illuminate\Support\Facades\Route;
 
 beforeEach(function () {
@@ -14,7 +14,7 @@ beforeEach(function () {
         'huwiya.validate_issuer' => true,
         'huwiya.validate_audience' => true,
         'auth.guards.api' => [
-            'driver' => 'hawia-api',
+            'driver' => 'huwiya-api',
             'provider' => 'users',
         ],
     ]);
@@ -39,7 +39,7 @@ it('rejects JWT with alg:none header (algorithm confusion attack)', function () 
     ])), '+/', '-_'), '=');
 
     $payload = rtrim(strtr(base64_encode(json_encode([
-        'sub' => $user->hawia_id,
+        'sub' => $user->huwiya_id,
         'name' => $user->name,
         'phone' => $user->phone,
         'iss' => 'https://idp.example.com',
@@ -57,7 +57,7 @@ it('rejects JWT with alg:HS256 header (algorithm downgrade attack)', function ()
     $user = User::factory()->create();
 
     $jwt = createTestJwt([
-        'sub' => $user->hawia_id,
+        'sub' => $user->huwiya_id,
         'name' => $user->name,
         'phone' => $user->phone,
         'iss' => 'https://idp.example.com',
@@ -72,7 +72,7 @@ it('rejects JWT with wrong audience claim', function () {
     $user = User::factory()->create();
 
     $jwt = createTestJwt([
-        'sub' => $user->hawia_id,
+        'sub' => $user->huwiya_id,
         'name' => $user->name,
         'phone' => $user->phone,
         'iss' => 'https://idp.example.com',
@@ -87,7 +87,7 @@ it('rejects JWT with wrong issuer claim', function () {
     $user = User::factory()->create();
 
     $jwt = createTestJwt([
-        'sub' => $user->hawia_id,
+        'sub' => $user->huwiya_id,
         'name' => $user->name,
         'phone' => $user->phone,
         'iss' => 'https://evil-idp.example.com',
@@ -102,7 +102,7 @@ it('accepts JWT with correct issuer and audience', function () {
     $user = User::factory()->create();
 
     $jwt = createTestJwt([
-        'sub' => $user->hawia_id,
+        'sub' => $user->huwiya_id,
         'name' => $user->name,
         'phone' => $user->phone,
         'iss' => 'https://idp.example.com',
@@ -119,7 +119,7 @@ it('skips issuer validation when disabled', function () {
     $user = User::factory()->create();
 
     $jwt = createTestJwt([
-        'sub' => $user->hawia_id,
+        'sub' => $user->huwiya_id,
         'name' => $user->name,
         'phone' => $user->phone,
         'iss' => 'https://any-issuer.example.com',
@@ -136,7 +136,7 @@ it('skips audience validation when disabled', function () {
     $user = User::factory()->create();
 
     $jwt = createTestJwt([
-        'sub' => $user->hawia_id,
+        'sub' => $user->huwiya_id,
         'name' => $user->name,
         'phone' => $user->phone,
         'iss' => 'https://idp.example.com',
@@ -151,7 +151,7 @@ it('rejects JWT without kid header', function () {
     $user = User::factory()->create();
 
     $jwt = createTestJwt([
-        'sub' => $user->hawia_id,
+        'sub' => $user->huwiya_id,
         'name' => $user->name,
         'phone' => $user->phone,
         'iss' => 'https://idp.example.com',

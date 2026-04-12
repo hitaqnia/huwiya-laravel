@@ -1,6 +1,6 @@
 <?php
 
-namespace Hawia;
+namespace Huwiya;
 
 use Illuminate\Contracts\Auth\UserProvider;
 use Illuminate\Http\Request;

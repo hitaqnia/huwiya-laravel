@@ -1,6 +1,6 @@
 <?php
 
-namespace Hawia\Http\Middleware;
+namespace Huwiya\Http\Middleware;
 
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
@@ -56,7 +56,7 @@ class EnsureFrontendRequestsAreStateful
         ])));
 
         array_unshift($middleware, function ($request, $next) {
-            $request->attributes->set('hawia', true);
+            $request->attributes->set('huwiya', true);
 
             return $next($request);
         });

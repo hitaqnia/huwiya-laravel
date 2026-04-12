@@ -1,6 +1,6 @@
 <?php
 
-namespace Hawia;
+namespace Huwiya;
 
 use RuntimeException;
 

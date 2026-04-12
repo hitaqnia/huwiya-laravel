@@ -14,7 +14,20 @@ return [
     |
     */
 
-    'url' => env('HUWIYA_URL'),
+    'url' => env('HUWIYA_URL', 'https://huwiya.id'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Project ID
+    |--------------------------------------------------------------------------
+    |
+    | The project ID that groups related OAuth clients. Tokens issued by the
+    | IdP carry the project ID as the audience claim, allowing multiple
+    | clients within the same project to accept each other's tokens.
+    |
+    */
+
+    'project_id' => env('HUWIYA_PROJECT_ID'),
 
     /*
     |--------------------------------------------------------------------------
@@ -47,7 +60,7 @@ return [
     |
     */
 
-    'redirect_uri' => env('HUWIYA_REDIRECT_URI'),
+    'redirect_uri' => env('HUWIYA_REDIRECT_URI', rtrim(env('APP_URL', 'http://localhost'), '/').'/huwiya/callback'),
 
     /*
     |--------------------------------------------------------------------------
@@ -79,7 +92,7 @@ return [
         sprintf(
             '%s%s%s',
             'localhost,localhost:3000,127.0.0.1,127.0.0.1:8000,::1',
-            Hawia\Hawia::currentApplicationUrlWithPort(),
+            Huwiya\Huwiya::currentApplicationUrlWithPort(),
             ','.parse_url(env('FRONTEND_URL', ''), PHP_URL_HOST),
         ),
     )),
@@ -160,19 +173,6 @@ return [
     */
 
     'validate_issuer' => env('HUWIYA_VALIDATE_ISSUER', true),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Project ID
-    |--------------------------------------------------------------------------
-    |
-    | The project ID that groups related OAuth clients. Tokens issued by the
-    | IdP carry the project ID as the audience claim, allowing multiple
-    | clients within the same project to accept each other's tokens.
-    |
-    */
-
-    'project_id' => env('HUWIYA_PROJECT_ID'),
 
     /*
     |--------------------------------------------------------------------------

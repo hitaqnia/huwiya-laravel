@@ -1,13 +1,13 @@
 <?php
 
-namespace Hawia;
+namespace Huwiya;
 
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
-class Hawia
+class Huwiya
 {
     /** @var (callable(): mixed)|null */
     protected static $authorizationDeniedCallback = null;
@@ -145,7 +145,7 @@ class Hawia
         }
 
         // Kid not found in cache — bust cache and refetch (key rotation).
-        Cache::forget('hawia:jwks');
+        Cache::forget('huwiya:jwks');
 
         $pem = static::findKeyInCachedJwks($kid);
 
@@ -161,7 +161,7 @@ class Hawia
      */
     protected static function findKeyInCachedJwks(string $kid): ?string
     {
-        $jwks = Cache::remember('hawia:jwks', 3600, function () {
+        $jwks = Cache::remember('huwiya:jwks', 3600, function () {
             return static::fetchJwks();
         });
 

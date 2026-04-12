@@ -1,6 +1,6 @@
 <?php
 
-use Hawia\Tests\Fixtures\User;
+use Huwiya\Tests\Fixtures\User;
 use Illuminate\Support\Facades\Route;
 
 beforeEach(function () {
@@ -10,7 +10,7 @@ beforeEach(function () {
         'huwiya.validate_issuer' => false,
         'huwiya.validate_audience' => false,
         'auth.guards.api' => [
-            'driver' => 'hawia-api',
+            'driver' => 'huwiya-api',
             'provider' => 'users',
         ],
     ]);
@@ -29,7 +29,7 @@ it('authenticates a user with a valid JWT bearer token', function () {
     $user = User::factory()->create();
 
     $jwt = createTestJwt([
-        'sub' => $user->hawia_id,
+        'sub' => $user->huwiya_id,
         'name' => $user->name,
         'phone' => $user->phone,
     ]);
@@ -56,7 +56,7 @@ it('rejects requests with a tampered JWT payload', function () {
     $user = User::factory()->create();
 
     $jwt = createTestJwt([
-        'sub' => $user->hawia_id,
+        'sub' => $user->huwiya_id,
         'name' => $user->name,
         'phone' => $user->phone,
     ]);
@@ -80,7 +80,7 @@ it('rejects requests with an expired JWT', function () {
     $user = User::factory()->create();
 
     $jwt = createTestJwt([
-        'sub' => $user->hawia_id,
+        'sub' => $user->huwiya_id,
         'name' => $user->name,
         'phone' => $user->phone,
         'exp' => time() - 200,
@@ -94,7 +94,7 @@ it('allows tokens within the leeway window', function () {
     $user = User::factory()->create();
 
     $jwt = createTestJwt([
-        'sub' => $user->hawia_id,
+        'sub' => $user->huwiya_id,
         'name' => $user->name,
         'phone' => $user->phone,
         'exp' => time() - 30,
@@ -106,7 +106,7 @@ it('allows tokens within the leeway window', function () {
 
 it('auto-registers a new user from a valid JWT', function () {
     $jwt = createTestJwt([
-        'sub' => 'new-hawia-id',
+        'sub' => 'new-huwiya-id',
         'name' => 'New User',
         'phone' => '+1234567890',
     ]);
@@ -118,7 +118,7 @@ it('auto-registers a new user from a valid JWT', function () {
         ]);
 
     $this->assertDatabaseHas('users', [
-        'hawia_id' => 'new-hawia-id',
+        'huwiya_id' => 'new-huwiya-id',
         'name' => 'New User',
         'phone' => '+1234567890',
     ]);
@@ -131,13 +131,13 @@ it('attaches token claims to the authenticated user', function () {
         $user = auth('api')->user();
 
         return response()->json([
-            'has_token' => $user->hawiaToken !== null,
-            'token_id' => $user->hawiaToken?->id,
+            'has_token' => $user->huwiyaToken !== null,
+            'token_id' => $user->huwiyaToken?->id,
         ]);
     });
 
     $jwt = createTestJwt([
-        'sub' => $user->hawia_id,
+        'sub' => $user->huwiya_id,
         'name' => $user->name,
         'phone' => $user->phone,
     ]);
@@ -146,7 +146,7 @@ it('attaches token claims to the authenticated user', function () {
         ->assertSuccessful()
         ->assertJson([
             'has_token' => true,
-            'token_id' => $user->hawia_id,
+            'token_id' => $user->huwiya_id,
         ]);
 });
 
@@ -158,7 +158,7 @@ it('skips signature verification when disabled', function () {
     // Create a JWT with a completely random signature (no valid key)
     $header = rtrim(strtr(base64_encode(json_encode(['alg' => 'RS256', 'typ' => 'JWT'])), '+/', '-_'), '=');
     $payload = rtrim(strtr(base64_encode(json_encode([
-        'sub' => $user->hawia_id,
+        'sub' => $user->huwiya_id,
         'name' => $user->name,
         'phone' => $user->phone,
         'exp' => time() + 3600,
@@ -181,7 +181,7 @@ it('rejects JWT signed with a different key', function () {
     ]);
 
     $jwt = createTestJwt([
-        'sub' => $user->hawia_id,
+        'sub' => $user->huwiya_id,
         'name' => $user->name,
         'phone' => $user->phone,
     ], $wrongKey);
