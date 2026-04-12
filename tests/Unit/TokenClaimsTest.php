@@ -56,9 +56,30 @@ it('throws on invalid JWT format', function () {
     TokenClaims::fromJwt('not-a-jwt');
 })->throws(RuntimeException::class, 'Invalid JWT token format.');
 
+it('throws InvalidTokenClaimsException when required claims are missing', function () {
+    TokenClaims::fromArray([
+        'sub' => 'user-123',
+        // name + phone missing
+    ]);
+})->throws(
+    \Huwiya\Exceptions\InvalidTokenClaimsException::class,
+    'missing required keys: name, phone',
+);
+
+it('throws InvalidTokenClaimsException when a required claim is empty', function () {
+    TokenClaims::fromArray([
+        'sub' => 'user-123',
+        'name' => '',
+        'phone' => '+123',
+    ]);
+})->throws(
+    \Huwiya\Exceptions\InvalidTokenClaimsException::class,
+    'missing required keys: name',
+);
+
 it('throws on invalid base64 payload', function () {
     TokenClaims::fromJwt('header.!!!invalid!!!.signature');
-})->throws(RuntimeException::class, 'Failed to parse token claims.');
+})->throws(RuntimeException::class, 'Failed to decode token payload.');
 
 it('reports not expired when expiresAt is null', function () {
     $claims = TokenClaims::fromArray([

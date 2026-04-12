@@ -11,4 +11,9 @@ class User extends Authenticatable
     use HasFactory, HasHuwiyaTokens;
 
     protected $fillable = ['name', 'huwiya_id', 'phone'];
+
+    protected static function newFactory(): UserFactory
+    {
+        return UserFactory::new();
+    }
 }

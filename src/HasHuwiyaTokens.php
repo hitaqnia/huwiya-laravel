@@ -2,6 +2,8 @@
 
 namespace Huwiya;
 
+use Huwiya\Exceptions\HuwiyaUserNotFoundException;
+
 trait HasHuwiyaTokens
 {
     /**
@@ -59,9 +61,13 @@ trait HasHuwiyaTokens
         $instance = new static;
         $identifier = $instance->getHuwiyaIdentifierColumn();
 
-        $user = static::where($identifier, $claims->id)->first();
+        if (! $instance->shouldAutoRegister()) {
+            $user = static::where($identifier, $claims->id)->first();
 
-        if ($user !== null) {
+            if ($user === null) {
+                throw new HuwiyaUserNotFoundException('User not found and auto-registration is disabled.');
+            }
+
             $updateAttributes = $user->getHuwiyaUpdateAttributes($claims);
 
             if ($updateAttributes !== []) {
@@ -71,14 +77,20 @@ trait HasHuwiyaTokens
             return $user;
         }
 
-        if (! $instance->shouldAutoRegister()) {
-            throw new \RuntimeException('User not found and auto-registration is disabled.');
+        $user = static::firstOrCreate(
+            [$identifier => $claims->id],
+            $instance->getHuwiyaCreateAttributes($claims),
+        );
+
+        if (! $user->wasRecentlyCreated) {
+            $updateAttributes = $user->getHuwiyaUpdateAttributes($claims);
+
+            if ($updateAttributes !== []) {
+                $user->update($updateAttributes);
+            }
         }
 
-        return static::create([
-            $identifier => $claims->id,
-            ...$instance->getHuwiyaCreateAttributes($claims),
-        ]);
+        return $user;
     }
 
     /**

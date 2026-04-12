@@ -2,8 +2,9 @@
 
 namespace Huwiya;
 
+use Huwiya\Support\AuthorizationDeniedCallback;
+use Huwiya\Support\HuwiyaManager;
 use Illuminate\Auth\RequestGuard;
-use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
@@ -12,16 +13,16 @@ class HuwiyaServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        if (! app()->configurationIsCached()) {
-            $this->mergeConfigFrom(__DIR__.'/../config/huwiya.php', 'huwiya');
-        }
+        $this->mergeConfigFrom(__DIR__.'/../config/huwiya.php', 'huwiya');
+
+        $this->app->scoped(AuthorizationDeniedCallback::class);
+        $this->app->singleton(HuwiyaManager::class);
     }
 
     public function boot(): void
     {
         $this->defineRoutes();
         $this->configureGuard();
-        $this->configureMiddleware();
 
         if ($this->app->runningInConsole()) {
             $this->publishes([
@@ -32,13 +33,20 @@ class HuwiyaServiceProvider extends ServiceProvider
 
     protected function defineRoutes(): void
     {
-        if (app()->routesAreCached()) {
+        if (! config('huwiya.routes.enabled', true)) {
             return;
         }
 
-        Route::middleware('web')->group(function () {
-            Route::get('/huwiya/redirect', Http\Controllers\RedirectController::class)->name('huwiya.redirect');
-            Route::get('/huwiya/callback', Http\Controllers\CallbackController::class)->name('huwiya.callback');
+        if ($this->app->routesAreCached()) {
+            return;
+        }
+
+        $prefix = trim((string) config('huwiya.routes.prefix', 'huwiya'), '/');
+        $prefix = $prefix === '' ? 'huwiya' : $prefix;
+
+        Route::middleware('web')->prefix($prefix)->group(function () {
+            Route::get('/redirect', Http\Controllers\RedirectController::class)->name('huwiya.redirect');
+            Route::get('/callback', Http\Controllers\CallbackController::class)->name('huwiya.callback');
         });
     }
 
@@ -49,7 +57,7 @@ class HuwiyaServiceProvider extends ServiceProvider
                 $provider = $auth->createUserProvider($config['provider'] ?? null);
 
                 return tap(
-                    new RequestGuard(new WebGuard($provider), request(), $provider),
+                    new RequestGuard(new WebGuard($provider, $name), request(), $provider),
                     fn ($guard) => $app->refresh('request', $guard, 'setRequest'),
                 );
             });
@@ -61,12 +69,5 @@ class HuwiyaServiceProvider extends ServiceProvider
                 );
             });
         });
-    }
-
-    protected function configureMiddleware(): void
-    {
-        $kernel = app()->make(Kernel::class);
-
-        $kernel->prependToMiddlewarePriority(Http\Middleware\EnsureFrontendRequestsAreStateful::class);
     }
 }

@@ -9,6 +9,7 @@ class WebGuard
 {
     public function __construct(
         protected ?UserProvider $provider = null,
+        protected ?string $guardName = null,
     ) {}
 
     /**
@@ -28,7 +29,9 @@ class WebGuard
             return null;
         }
 
-        $id = $request->session()->get('login_web_'.sha1('Illuminate\Auth\SessionGuard'));
+        $guard = $this->guardName ?? (string) config('huwiya.web_guard', 'web');
+
+        $id = $request->session()->get(Huwiya::sessionKeyForGuard($guard));
 
         if ($id === null) {
             return null;

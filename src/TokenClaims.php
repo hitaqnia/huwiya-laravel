@@ -2,7 +2,8 @@
 
 namespace Huwiya;
 
-use RuntimeException;
+use Huwiya\Exceptions\InvalidJwtFormatException;
+use Huwiya\Exceptions\InvalidTokenClaimsException;
 
 class TokenClaims
 {
@@ -23,14 +24,26 @@ class TokenClaims
      */
     public static function fromArray(array $claims): self
     {
+        $missing = [];
+
+        foreach (['sub', 'name', 'phone'] as $required) {
+            if (! array_key_exists($required, $claims) || $claims[$required] === null || $claims[$required] === '') {
+                $missing[] = $required;
+            }
+        }
+
+        if ($missing !== []) {
+            throw InvalidTokenClaimsException::missingKeys($missing);
+        }
+
         return new self(
-            id: $claims['sub'],
-            name: $claims['name'],
-            phoneNumber: $claims['phone'],
-            issuer: $claims['iss'] ?? null,
+            id: (string) $claims['sub'],
+            name: (string) $claims['name'],
+            phoneNumber: (string) $claims['phone'],
+            issuer: isset($claims['iss']) ? (string) $claims['iss'] : null,
             issuedAt: isset($claims['iat']) ? (int) $claims['iat'] : null,
             expiresAt: isset($claims['exp']) ? (int) $claims['exp'] : null,
-            audience: $claims['aud'] ?? null,
+            audience: isset($claims['aud']) ? (string) $claims['aud'] : null,
         );
     }
 
@@ -44,15 +57,21 @@ class TokenClaims
     {
         $parts = explode('.', $token);
 
-        throw_unless(count($parts) === 3, RuntimeException::class, 'Invalid JWT token format.');
+        if (count($parts) !== 3) {
+            throw new InvalidJwtFormatException('Invalid JWT token format.');
+        }
 
-        $payload = base64_decode(strtr($parts[1], '-_', '+/'));
+        $payload = Huwiya::base64UrlDecode($parts[1]);
 
-        throw_unless($payload !== false, RuntimeException::class, 'Failed to decode token payload.');
+        if ($payload === false) {
+            throw new InvalidJwtFormatException('Failed to decode token payload.');
+        }
 
         $decoded = json_decode($payload, true);
 
-        throw_unless(is_array($decoded), RuntimeException::class, 'Failed to parse token claims.');
+        if (! is_array($decoded)) {
+            throw new InvalidJwtFormatException('Failed to parse token claims.');
+        }
 
         return self::fromArray($decoded);
     }

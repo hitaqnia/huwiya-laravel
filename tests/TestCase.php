@@ -18,6 +18,8 @@ abstract class TestCase extends OrchestraTestCase
 
     protected function defineEnvironment($app): void
     {
+        $app['config']->set('app.key', 'base64:'.base64_encode(random_bytes(32)));
+
         $app['config']->set('database.default', 'testing');
         $app['config']->set('database.connections.testing', [
             'driver' => 'sqlite',
@@ -25,12 +27,14 @@ abstract class TestCase extends OrchestraTestCase
             'prefix' => '',
         ]);
 
-        $app['config']->set('huwiya.idp_url', 'https://idp.example.com');
+        $app['config']->set('huwiya.url', 'https://idp.example.com');
         $app['config']->set('huwiya.client_id', 'test-client-id');
         $app['config']->set('huwiya.client_secret', 'test-client-secret');
         $app['config']->set('huwiya.redirect_uri', 'https://app.example.com/callback');
         $app['config']->set('huwiya.algorithm', 'RS256');
         $app['config']->set('huwiya.leeway', 60);
+
+        $app['config']->set('auth.providers.users.model', \Huwiya\Tests\Fixtures\User::class);
     }
 
     protected function defineDatabaseMigrations(): void

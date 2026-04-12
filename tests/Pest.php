@@ -104,7 +104,7 @@ function seedTestJwksCache(): void
     $keys = getTestRsaKeys();
     $details = openssl_pkey_get_details(openssl_pkey_get_public($keys['public']));
 
-    Cache::put('huwiya:jwks', [
+    Cache::put(\Huwiya\Huwiya::jwksCacheKey(), [
         'keys' => [
             [
                 'kty' => 'RSA',

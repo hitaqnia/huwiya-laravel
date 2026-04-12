@@ -64,6 +64,24 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Routes
+    |--------------------------------------------------------------------------
+    |
+    | Control the package-provided OAuth2 redirect/callback routes.
+    | Set `enabled` to false to disable them entirely (e.g. if your app
+    | wires its own controllers at custom paths). `prefix` controls the
+    | URL segment both routes live under (defaults to "huwiya", producing
+    | "/huwiya/redirect" and "/huwiya/callback").
+    |
+    */
+
+    'routes' => [
+        'enabled' => env('HUWIYA_ROUTES_ENABLED', true),
+        'prefix' => env('HUWIYA_ROUTES_PREFIX', 'huwiya'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Web Guard
     |--------------------------------------------------------------------------
     |
@@ -87,23 +105,30 @@ return [
     |
     */
 
-    'stateful' => explode(',', env(
+    'stateful' => array_values(array_filter(array_map('trim', explode(',', env(
         'HUWIYA_STATEFUL_DOMAINS',
-        sprintf(
-            '%s%s%s',
-            'localhost,localhost:3000,127.0.0.1,127.0.0.1:8000,::1',
-            Huwiya\Huwiya::currentApplicationUrlWithPort(),
-            ','.parse_url(env('FRONTEND_URL', ''), PHP_URL_HOST),
-        ),
-    )),
+        implode(',', array_filter([
+            'localhost',
+            'localhost:3000',
+            '127.0.0.1',
+            '127.0.0.1:8000',
+            '::1',
+            parse_url(env('APP_URL', ''), PHP_URL_HOST),
+            parse_url(env('FRONTEND_URL', ''), PHP_URL_HOST),
+        ])),
+    ))))),
 
     /*
     |--------------------------------------------------------------------------
     | Middleware
     |--------------------------------------------------------------------------
     |
-    | Middleware classes used during stateful request handling. You may
-    | override these if your application uses custom middleware.
+    | Middleware classes used during stateful request handling. These are
+    | only consulted when you manually register
+    | `Huwiya\Http\Middleware\EnsureFrontendRequestsAreStateful` in your
+    | application's middleware stack — see the README "Frontend SPA"
+    | section. Override these entries if your app uses custom cookie or
+    | CSRF middleware.
     |
     */
 
@@ -198,5 +223,21 @@ return [
     */
 
     'auth_method' => env('HUWIYA_AUTH_METHOD', 'basic'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Log Channel
+    |--------------------------------------------------------------------------
+    |
+    | The log channel the package should write warnings to when authentication
+    | or JWKS operations fail. When null (the default) logging is a no-op.
+    | Set this to a channel configured in config/logging.php — for example
+    | "stack", "single", or a dedicated "huwiya" channel — to receive
+    | diagnostics for failed token exchanges, JWKS fetches, signature
+    | mismatches, and authorization denials.
+    |
+    */
+
+    'log_channel' => env('HUWIYA_LOG_CHANNEL'),
 
 ];

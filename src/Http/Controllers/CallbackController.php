@@ -2,28 +2,36 @@
 
 namespace Huwiya\Http\Controllers;
 
+use Huwiya\Exceptions\AuthConfigurationException;
+use Huwiya\Exceptions\InvalidStateException;
+use Huwiya\Exceptions\TokenExchangeException;
 use Huwiya\HasHuwiyaTokens;
 use Huwiya\Huwiya;
 use Huwiya\TokenClaims;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
-use RuntimeException;
 use Symfony\Component\HttpFoundation\Response;
 
 class CallbackController
 {
     public function __invoke(Request $request): Response
     {
+        if ($request->has('error')) {
+            $error = (string) $request->input('error');
+            $description = $request->input('error_description');
+
+            Huwiya::log()?->warning('Huwiya: authorization denied at IdP.', [
+                'error' => $error,
+                'error_description' => $description,
+            ]);
+
+            return Huwiya::denied($error, $description);
+        }
+
         $state = $request->session()->pull('state');
 
-        throw_unless(
-            strlen($state) > 0 && $state === $request->state,
-            \InvalidArgumentException::class,
-            'Invalid state value.'
-        );
-
-        if ($request->has('error')) {
-            return Huwiya::denied();
+        if (! is_string($state) || $state === '' || ! hash_equals($state, (string) $request->input('state'))) {
+            throw new InvalidStateException('Invalid state value.');
         }
 
         $http = Http::asForm();
@@ -43,9 +51,24 @@ class CallbackController
 
         $response = $http->post(config('huwiya.url').'/oauth/token', $tokenParams);
 
-        throw_unless($response->successful(), RuntimeException::class, 'Failed to retrieve access token.');
+        if (! $response->successful()) {
+            Huwiya::log()?->warning('Huwiya: token exchange failed.', [
+                'status' => $response->status(),
+                'body' => \Illuminate\Support\Str::limit((string) $response->body(), 200),
+            ]);
 
-        $claims = TokenClaims::fromJwt($response->json('access_token'));
+            throw new TokenExchangeException('Failed to retrieve access token.');
+        }
+
+        $accessToken = $response->json('access_token');
+
+        if (! is_string($accessToken) || $accessToken === '') {
+            Huwiya::log()?->warning('Huwiya: token exchange response missing access_token.');
+
+            throw new TokenExchangeException('Token endpoint response did not include an access_token.');
+        }
+
+        $claims = TokenClaims::fromJwt($accessToken);
 
         return $this->authenticateUser($claims, $request);
     }
@@ -59,24 +82,23 @@ class CallbackController
         $provider = config("auth.guards.{$guard}.provider", 'users');
         $model = config("auth.providers.{$provider}.model");
 
-        throw_unless($model, RuntimeException::class, 'Unable to determine user model from auth configuration.');
-        throw_unless(
-            in_array(HasHuwiyaTokens::class, class_uses_recursive($model)),
-            RuntimeException::class,
-            "The model [{$model}] must use the HasHuwiyaTokens trait."
-        );
+        if (! $model) {
+            throw new AuthConfigurationException('Unable to determine user model from auth configuration.');
+        }
+
+        if (! in_array(HasHuwiyaTokens::class, class_uses_recursive($model), true)) {
+            throw new AuthConfigurationException("The model [{$model}] must use the HasHuwiyaTokens trait.");
+        }
 
         $user = $model::findOrCreateFromHuwiya($claims);
 
         $request->session()->put(
-            'login_web_'.sha1('Illuminate\Auth\SessionGuard'),
+            Huwiya::sessionKeyForGuard($guard),
             $user->getAuthIdentifier(),
         );
 
         $request->session()->regenerate();
 
-        $intended = $request->session()->pull('url.intended', '/');
-
-        return redirect($intended);
+        return redirect()->intended('/');
     }
 }

@@ -43,7 +43,7 @@ it('rejects JWT with alg:none header (algorithm confusion attack)', function () 
         'name' => $user->name,
         'phone' => $user->phone,
         'iss' => 'https://idp.example.com',
-        'aud' => 'test-client-id',
+        'aud' => 'test-project-id',
         'exp' => time() + 3600,
     ])), '+/', '-_'), '=');
 
@@ -61,7 +61,7 @@ it('rejects JWT with alg:HS256 header (algorithm downgrade attack)', function ()
         'name' => $user->name,
         'phone' => $user->phone,
         'iss' => 'https://idp.example.com',
-        'aud' => 'test-client-id',
+        'aud' => 'test-project-id',
     ], headerOverrides: ['alg' => 'HS256']);
 
     $this->getJson('/test/secure', ['Authorization' => "Bearer {$jwt}"])
@@ -76,7 +76,7 @@ it('rejects JWT with wrong audience claim', function () {
         'name' => $user->name,
         'phone' => $user->phone,
         'iss' => 'https://idp.example.com',
-        'aud' => 'wrong-client-id',
+        'aud' => 'wrong-project-id',
     ]);
 
     $this->getJson('/test/secure', ['Authorization' => "Bearer {$jwt}"])
@@ -91,7 +91,7 @@ it('rejects JWT with wrong issuer claim', function () {
         'name' => $user->name,
         'phone' => $user->phone,
         'iss' => 'https://evil-idp.example.com',
-        'aud' => 'test-client-id',
+        'aud' => 'test-project-id',
     ]);
 
     $this->getJson('/test/secure', ['Authorization' => "Bearer {$jwt}"])
@@ -155,7 +155,7 @@ it('rejects JWT without kid header', function () {
         'name' => $user->name,
         'phone' => $user->phone,
         'iss' => 'https://idp.example.com',
-        'aud' => 'test-client-id',
+        'aud' => 'test-project-id',
     ], headerOverrides: ['kid' => '']);
 
     $this->getJson('/test/secure', ['Authorization' => "Bearer {$jwt}"])

@@ -2,6 +2,7 @@
 
 namespace Huwiya;
 
+use Huwiya\Exceptions\AuthConfigurationException;
 use Illuminate\Http\Request;
 
 class ApiGuard
@@ -33,11 +34,16 @@ class ApiGuard
         $model = config("auth.providers.{$this->provider}.model");
 
         if ($model === null) {
-            return null;
+            throw new AuthConfigurationException(
+                "Unable to determine user model for auth provider [{$this->provider}]. "
+                .'Check your config/auth.php providers configuration.'
+            );
         }
 
-        if (! in_array(HasHuwiyaTokens::class, class_uses_recursive($model))) {
-            return null;
+        if (! in_array(HasHuwiyaTokens::class, class_uses_recursive($model), true)) {
+            throw new AuthConfigurationException(
+                "The model [{$model}] must use the HasHuwiyaTokens trait."
+            );
         }
 
         $user = $model::findOrCreateFromHuwiya($claims);
