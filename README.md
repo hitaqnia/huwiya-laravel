@@ -12,7 +12,7 @@ A Laravel SDK for the [Huwiya](https://huwiya.id) Identity Provider. Adds OAuth2
 ### 1. Install
 
 ```bash
-composer require hitaqnia/huwiya
+composer require hitaqnia/huwiya-laravel
 ```
 
 Service provider auto-discovery registers the package.

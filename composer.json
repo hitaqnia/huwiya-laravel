@@ -1,5 +1,5 @@
 {
-    "name": "hitaqnia/huwiya",
+    "name": "hitaqnia/huwiya-laravel",
     "description": "A Laravel SDK for integrating with the Huwiya Identity Provider.",
     "type": "library",
     "license": "MIT",
