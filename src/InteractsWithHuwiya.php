@@ -4,12 +4,31 @@ namespace Huwiya;
 
 use Huwiya\Exceptions\HuwiyaUserNotFoundException;
 
-trait HasHuwiyaTokens
+trait InteractsWithHuwiya
 {
     /**
      * The current Huwiya token claims for the authenticated user.
      */
     public ?TokenClaims $huwiyaToken = null;
+
+    /**
+     * Ensure the Huwiya identifier column is mass-assignable without
+     * clobbering the developer's own $fillable / $guarded configuration.
+     */
+    public function initializeInteractsWithHuwiya(): void
+    {
+        if ($this->totallyGuarded()) {
+            return;
+        }
+
+        $column = $this->getHuwiyaIdentifierColumn();
+
+        if (in_array($column, $this->getFillable(), true)) {
+            return;
+        }
+
+        $this->mergeFillable([$column]);
+    }
 
     /**
      * Get the column name that stores the Huwiya subject identifier.

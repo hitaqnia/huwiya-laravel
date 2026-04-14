@@ -36,7 +36,7 @@ it('throws AuthConfigurationException when the auth provider model is missing', 
         ->toThrow(AuthConfigurationException::class);
 });
 
-it('throws AuthConfigurationException when the model does not use HasHuwiyaTokens', function () {
+it('throws AuthConfigurationException when the model does not use InteractsWithHuwiya', function () {
     config([
         'auth.providers.users.model' => UserWithoutTrait::class,
         'auth.guards.api' => ['driver' => 'huwiya-api', 'provider' => 'users'],
@@ -54,5 +54,5 @@ it('throws AuthConfigurationException when the model does not use HasHuwiyaToken
     $this->withoutExceptionHandling();
 
     expect(fn () => $this->getJson('/test/cfg', ['Authorization' => "Bearer {$jwt}"]))
-        ->toThrow(AuthConfigurationException::class, 'must use the HasHuwiyaTokens trait');
+        ->toThrow(AuthConfigurationException::class, 'must use the InteractsWithHuwiya trait');
 });

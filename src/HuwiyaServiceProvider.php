@@ -5,6 +5,7 @@ namespace Huwiya;
 use Huwiya\Support\AuthorizationDeniedCallback;
 use Huwiya\Support\HuwiyaManager;
 use Illuminate\Auth\RequestGuard;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
@@ -23,12 +24,25 @@ class HuwiyaServiceProvider extends ServiceProvider
     {
         $this->defineRoutes();
         $this->configureGuard();
+        $this->registerBlueprintMacros();
 
         if ($this->app->runningInConsole()) {
             $this->publishes([
                 __DIR__.'/../config/huwiya.php' => config_path('huwiya.php'),
             ], 'huwiya-config');
         }
+    }
+
+    protected function registerBlueprintMacros(): void
+    {
+        if (Blueprint::hasMacro('huwiyaIdentifier')) {
+            return;
+        }
+
+        Blueprint::macro('huwiyaIdentifier', function (string $column = 'huwiya_id') {
+            /** @var Blueprint $this */
+            return $this->ulid($column)->unique();
+        });
     }
 
     protected function defineRoutes(): void

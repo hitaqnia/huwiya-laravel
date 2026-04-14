@@ -2,15 +2,15 @@
 
 namespace Huwiya\Tests\Fixtures;
 
-use Huwiya\HasHuwiyaTokens;
+use Huwiya\InteractsWithHuwiya;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 
 class User extends Authenticatable
 {
-    use HasFactory, HasHuwiyaTokens;
+    use HasFactory, InteractsWithHuwiya;
 
-    protected $fillable = ['name', 'huwiya_id', 'phone'];
+    protected $fillable = ['name', 'phone'];
 
     protected static function newFactory(): UserFactory
     {

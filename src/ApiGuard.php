@@ -40,9 +40,9 @@ class ApiGuard
             );
         }
 
-        if (! in_array(HasHuwiyaTokens::class, class_uses_recursive($model), true)) {
+        if (! in_array(InteractsWithHuwiya::class, class_uses_recursive($model), true)) {
             throw new AuthConfigurationException(
-                "The model [{$model}] must use the HasHuwiyaTokens trait."
+                "The model [{$model}] must use the InteractsWithHuwiya trait."
             );
         }
 

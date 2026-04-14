@@ -5,7 +5,7 @@ namespace Huwiya\Http\Controllers;
 use Huwiya\Exceptions\AuthConfigurationException;
 use Huwiya\Exceptions\InvalidStateException;
 use Huwiya\Exceptions\TokenExchangeException;
-use Huwiya\HasHuwiyaTokens;
+use Huwiya\InteractsWithHuwiya;
 use Huwiya\Huwiya;
 use Huwiya\TokenClaims;
 use Illuminate\Http\Request;
@@ -86,8 +86,8 @@ class CallbackController
             throw new AuthConfigurationException('Unable to determine user model from auth configuration.');
         }
 
-        if (! in_array(HasHuwiyaTokens::class, class_uses_recursive($model), true)) {
-            throw new AuthConfigurationException("The model [{$model}] must use the HasHuwiyaTokens trait.");
+        if (! in_array(InteractsWithHuwiya::class, class_uses_recursive($model), true)) {
+            throw new AuthConfigurationException("The model [{$model}] must use the InteractsWithHuwiya trait.");
         }
 
         $user = $model::findOrCreateFromHuwiya($claims);

@@ -39,26 +39,28 @@ Users are identified by a `huwiya_id` column (the `sub` claim from the IdP). Add
 Schema::create('users', function (Blueprint $table) {
     $table->id();
     $table->string('name');
-    $table->ulid('huwiya_id')->unique();
+    $table->huwiyaIdentifier();
     $table->string('phone')->unique();
     $table->timestamps();
 });
 ```
 
-The unique index on `huwiya_id` is required — the package relies on it to prevent duplicate users under concurrent first-login requests.
+The package registers a `huwiyaIdentifier()` Blueprint macro that creates a unique ULID column. It defaults to `huwiya_id`; pass a string to rename it (e.g. `$table->huwiyaIdentifier('sso_id')`) — make sure it matches `getHuwiyaIdentifierColumn()` on the model. The unique index is required — the package relies on it to prevent duplicate users under concurrent first-login requests.
 
-Add the `HasHuwiyaTokens` trait to your `User` model. **This trait is mandatory** — without it, both guards throw `Huwiya\Exceptions\AuthConfigurationException` when they attempt to resolve a user.
+Add the `InteractsWithHuwiya` trait to your `User` model. **This trait is mandatory** — without it, both guards throw `Huwiya\Exceptions\AuthConfigurationException` when they attempt to resolve a user.
 
 ```php
-use Huwiya\HasHuwiyaTokens;
+use Huwiya\InteractsWithHuwiya;
 
 class User extends Authenticatable
 {
-    use HasHuwiyaTokens;
+    use InteractsWithHuwiya;
 
-    protected $fillable = ['name', 'huwiya_id', 'phone'];
+    protected $fillable = ['name', 'phone'];
 }
 ```
+
+The trait automatically appends the Huwiya identifier column (default: `huwiya_id`) to your model's `$fillable` list at boot time, so you don't need to declare it yourself. Your own `$fillable` entries are preserved, and the merge is skipped entirely when the model is totally guarded.
 
 ### 4. Register guards
 
@@ -117,7 +119,7 @@ Set `HUWIYA_STATEFUL_DOMAINS` to a comma-separated list of your frontend origins
 
 ## Customizing the User Mapping
 
-The `HasHuwiyaTokens` trait has sensible defaults, but every part is overridable.
+The `InteractsWithHuwiya` trait has sensible defaults, but every part is overridable.
 
 ### Change the identifier column
 
@@ -126,6 +128,12 @@ public function getHuwiyaIdentifierColumn(): string
 {
     return 'sso_id';
 }
+```
+
+Pass the same name to the migration macro so the schema matches:
+
+```php
+$table->huwiyaIdentifier('sso_id');
 ```
 
 ### Map additional claim fields on create/update
@@ -256,7 +264,7 @@ The package throws typed exceptions so you can target specific failures. All ext
 | `JwksFetchException` | JWKS endpoint unreachable, non-2xx, or returned a body without a `keys` array. |
 | `UnknownKidException` | No key in the JWKS matched the JWT's `kid`, even after a cache refresh. |
 | `UnsupportedKeyTypeException` | JWKS key matched `kid` but its `kty` is not `RSA`. |
-| `AuthConfigurationException` | `auth.providers.{provider}.model` is missing, or the model does not use `HasHuwiyaTokens`. |
+| `AuthConfigurationException` | `auth.providers.{provider}.model` is missing, or the model does not use `InteractsWithHuwiya`. |
 | `HuwiyaUserNotFoundException` | Auto-registration disabled and no local user matches the incoming `sub`. |
 
 Guard-level auth failures (expired tokens, bad signatures, wrong issuer/audience) do **not** throw — guards return `null`, so Laravel's standard `auth:*` middleware responds with 401 as usual.
