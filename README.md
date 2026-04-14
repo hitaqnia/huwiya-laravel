@@ -1,41 +1,88 @@
-# Huwiya Laravel SDK
+# Huwiya SDK for Laravel
 
-A Laravel SDK for the [Huwiya](https://huwiya.id) Identity Provider. Adds OAuth2 authorization-code login for web apps and JWT bearer authentication for APIs, plugged in as standard Laravel auth guards.
+[![Latest Version on Packagist](https://img.shields.io/packagist/v/hitaqnia/huwiya-laravel.svg?style=flat-square)](https://packagist.org/packages/hitaqnia/huwiya-laravel)
+[![Total Downloads](https://img.shields.io/packagist/dt/hitaqnia/huwiya-laravel.svg?style=flat-square)](https://packagist.org/packages/hitaqnia/huwiya-laravel)
+[![License](https://img.shields.io/packagist/l/hitaqnia/huwiya-laravel.svg?style=flat-square)](LICENSE)
+
+The official Laravel SDK for the [Huwiya](https://huwiya.id) Identity Provider. It ships two first-class authentication drivers that integrate with Laravel's native guard system:
+
+- **`huwiya-web`** — OAuth 2.0 Authorization Code flow for session-based web applications.
+- **`huwiya-api`** — JWT Bearer authentication for stateless APIs.
+
+## Table of Contents
+
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+  - [Preparing the User Model](#preparing-the-user-model)
+  - [Registering Guards](#registering-guards)
+  - [Built-in Routes](#built-in-routes)
+- [How It Works](#how-it-works)
+  - [Web Flow](#web-flow)
+  - [API Flow](#api-flow)
+  - [SPA / First-Party Frontend](#spa--first-party-frontend)
+- [Customization](#customization)
+  - [User Mapping](#user-mapping)
+  - [Multiple Guards](#multiple-guards)
+  - [Authorization Denial Handler](#authorization-denial-handler)
+  - [Routes](#routes)
+  - [Stateful Middleware](#stateful-middleware)
+- [Testing Support](#testing-support)
+- [Exceptions](#exceptions)
+- [Logging](#logging)
+- [Security](#security)
+- [Configuration Reference](#configuration-reference)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Requirements
 
-- PHP 8.3+
-- Laravel 13.0+
+| Dependency | Version |
+| ---------- | ------- |
+| PHP        | `^8.3`  |
+| Laravel    | `^13.0` |
 
-## Getting Started
+## Installation
 
-### 1. Install
+Install the package via Composer:
 
 ```bash
 composer require hitaqnia/huwiya-laravel
 ```
 
-Service provider auto-discovery registers the package.
+The service provider is registered automatically through Laravel's package discovery.
 
-### 2. Configure
+Optionally, publish the configuration file:
 
-Add your credentials to `.env`:
+```bash
+php artisan vendor:publish --tag="huwiya-config"
+```
 
-```env
+## Configuration
+
+Add your Huwiya credentials to your `.env` file:
+
+```dotenv
 HUWIYA_PROJECT_ID=your-project-id
 HUWIYA_CLIENT_ID=your-client-id
 HUWIYA_CLIENT_SECRET=your-client-secret
 ```
 
-Every other setting — IdP URL (`https://huwiya.id`), redirect URI (`{APP_URL}/huwiya/callback`), JWT algorithm, leeway, etc. — has a sensible default. See [Configuration Reference](#configuration-reference) to override.
+All other settings fall back to sensible defaults, including the IdP base URL (`https://huwiya.id`), the redirect URI (`{APP_URL}/huwiya/callback`), the JWT algorithm (`RS256`), and clock-skew tolerance. Review the [Configuration Reference](#configuration-reference) to override any of them.
 
-> **Heads up:** the default `redirect_uri` is derived from `APP_URL`. Make sure `APP_URL` matches the host registered with the IdP, or set `HUWIYA_REDIRECT_URI` explicitly.
+> **Note:** the default redirect URI is derived from `APP_URL`. Ensure `APP_URL` matches the host registered with the IdP, or set `HUWIYA_REDIRECT_URI` explicitly.
 
-### 3. Prepare the User model
+## Usage
 
-Users are identified by a `huwiya_id` column (the `sub` claim from the IdP). Add a migration:
+### Preparing the User Model
+
+Every authenticated user is identified by a `huwiya_id` column, which stores the `sub` claim issued by the IdP. The package ships a Blueprint macro that creates this column with the correct type and constraints:
 
 ```php
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
 Schema::create('users', function (Blueprint $table) {
     $table->id();
     $table->string('name');
@@ -45,12 +92,13 @@ Schema::create('users', function (Blueprint $table) {
 });
 ```
 
-The package registers a `huwiyaIdentifier()` Blueprint macro that creates a unique ULID column. It defaults to `huwiya_id`; pass a string to rename it (e.g. `$table->huwiyaIdentifier('sso_id')`) — make sure it matches `getHuwiyaIdentifierColumn()` on the model. The unique index is required — the package relies on it to prevent duplicate users under concurrent first-login requests.
+The macro defaults to a column named `huwiya_id`. You may pass a custom name — `$table->huwiyaIdentifier('sso_id')` — as long as it matches the column returned by `getHuwiyaIdentifierColumn()` on your model. The unique index is required: the package relies on it to prevent duplicate user rows under concurrent first-login requests.
 
-Add the `InteractsWithHuwiya` trait to your `User` model. **This trait is mandatory** — without it, both guards throw `Huwiya\Exceptions\AuthConfigurationException` when they attempt to resolve a user.
+Next, add the `InteractsWithHuwiya` trait to your `User` model:
 
 ```php
 use Huwiya\InteractsWithHuwiya;
+use Illuminate\Foundation\Auth\User as Authenticatable;
 
 class User extends Authenticatable
 {
@@ -60,11 +108,13 @@ class User extends Authenticatable
 }
 ```
 
-The trait automatically appends the Huwiya identifier column (default: `huwiya_id`) to your model's `$fillable` list at boot time, so you don't need to declare it yourself. Your own `$fillable` entries are preserved, and the merge is skipped entirely when the model is totally guarded.
+> **The trait is mandatory.** Both guards throw `Huwiya\Exceptions\AuthConfigurationException` when resolving a user from a model that does not use it.
 
-### 4. Register guards
+At boot time, the trait appends the Huwiya identifier column to the model's `$fillable` array automatically. Your own `$fillable` entries are preserved, and the merge is skipped when the model is fully guarded.
 
-In `config/auth.php`, switch your web and/or API guards to the Huwiya drivers:
+### Registering Guards
+
+Switch your web and/or API guards in `config/auth.php` to the drivers provided by the package:
 
 ```php
 'guards' => [
@@ -79,33 +129,42 @@ In `config/auth.php`, switch your web and/or API guards to the Huwiya drivers:
 ],
 ```
 
-That's it. `/huwiya/redirect` starts the OAuth flow, `/huwiya/callback` handles the return, and `auth:api` accepts Bearer JWTs.
+### Built-in Routes
+
+Out of the box, the package registers two routes:
+
+| Method | URI                  | Name              | Description                                  |
+| ------ | -------------------- | ----------------- | -------------------------------------------- |
+| `GET`  | `/huwiya/redirect`   | `huwiya.redirect` | Initiates the OAuth 2.0 authorization flow. |
+| `GET`  | `/huwiya/callback`   | `huwiya.callback` | Handles the authorization server response.   |
+
+Authenticated API requests are handled transparently by the `huwiya-api` guard — no additional routes are required.
 
 ## How It Works
 
-### Web flow (OAuth2 Authorization Code)
+### Web Flow
 
-1. User hits `/huwiya/redirect` — the package stores a random `state` in the session and redirects to the IdP.
-2. IdP bounces back to `/huwiya/callback` — the package verifies state with a timing-safe comparison, exchanges the code for a JWT at `{url}/oauth/token`, decodes the claims, and calls `User::findOrCreateFromHuwiya($claims)`.
-3. The user is logged into the session. Subsequent requests authenticate via the `huwiya-web` guard, which reads the standard session key for the configured guard.
+1. The user visits `/huwiya/redirect`. The package generates a cryptographically random `state` value, stores it in the session, and redirects to the IdP.
+2. The IdP redirects back to `/huwiya/callback`. The package verifies the state using a timing-safe comparison, exchanges the authorization code for a JWT at `{url}/oauth/token`, decodes the claims, and invokes `User::findOrCreateFromHuwiya($claims)`.
+3. The user is authenticated into the session. Subsequent requests are authenticated by the `huwiya-web` guard.
 
-The callback redirects to `redirect()->intended('/')` — so `$request->session()->put('url.intended', …)` from your own middleware works as expected.
+After a successful login, the callback issues `redirect()->intended('/')`, so any `url.intended` value your middleware sets will be honoured.
 
-### API flow (JWT Bearer)
+### API Flow
 
-On each request, the `huwiya-api` guard:
+For each request, the `huwiya-api` guard performs the following steps:
 
 1. Reads the `Authorization: Bearer <jwt>` header.
-2. Verifies the signature against the IdP's JWKS (cached 1 hour under a key derived from the JWKS URI, auto-refetched on unknown `kid` for key rotation).
-3. Validates `alg`, `exp` (with leeway), `iss`, and `aud`.
-4. Calls `User::findOrCreateFromHuwiya($claims)`.
-5. Attaches the `TokenClaims` to `$user->huwiyaToken`.
+2. Verifies the signature against the IdP's JWKS, cached for one hour under a key derived from the JWKS URI. The cache is invalidated automatically when an unknown `kid` is encountered, supporting seamless key rotation.
+3. Validates the `alg`, `exp` (with leeway), `iss`, and `aud` claims.
+4. Invokes `User::findOrCreateFromHuwiya($claims)`.
+5. Attaches the decoded `TokenClaims` instance to `$user->huwiyaToken`.
 
-Stateless — no session involved.
+The flow is fully stateless — no session is created or read.
 
-### SPA / first-party frontend
+### SPA / First-Party Frontend
 
-The stateful middleware is **not registered automatically**. For cookie-based auth from a first-party SPA, register `EnsureFrontendRequestsAreStateful` yourself in `bootstrap/app.php`:
+The stateful middleware required for cookie-based SPA authentication is **not** registered automatically. Opt in by appending it to your global middleware stack in `bootstrap/app.php`:
 
 ```php
 use Huwiya\Http\Middleware\EnsureFrontendRequestsAreStateful;
@@ -115,52 +174,51 @@ use Huwiya\Http\Middleware\EnsureFrontendRequestsAreStateful;
 })
 ```
 
-Set `HUWIYA_STATEFUL_DOMAINS` to a comma-separated list of your frontend origins (localhost variants, `APP_URL`, and `FRONTEND_URL` are included by default).
+Configure `HUWIYA_STATEFUL_DOMAINS` with a comma-separated list of trusted frontend origins. Localhost variants, the host from `APP_URL`, and `FRONTEND_URL` are included by default.
 
-## Customizing the User Mapping
+## Customization
 
-The `InteractsWithHuwiya` trait has sensible defaults, but every part is overridable.
+### User Mapping
 
-### Change the identifier column
+The `InteractsWithHuwiya` trait provides sensible defaults for mapping Huwiya claims onto your model. Each method is overridable.
+
+**Identifier column.** Override the column name on both the model and the migration:
 
 ```php
+// On the User model:
 public function getHuwiyaIdentifierColumn(): string
 {
     return 'sso_id';
 }
-```
 
-Pass the same name to the migration macro so the schema matches:
-
-```php
+// In the migration:
 $table->huwiyaIdentifier('sso_id');
 ```
 
-### Map additional claim fields on create/update
+**Attribute mapping.** Control which claim fields are persisted on first login and on subsequent logins:
 
 ```php
+use Huwiya\TokenClaims;
+
 public function getHuwiyaCreateAttributes(TokenClaims $claims): array
 {
     return [
-        'name' => $claims->name,
+        'name'  => $claims->name,
         'phone' => $claims->phoneNumber,
         'email' => $claims->email ?? null,
-        'role' => 'member',
+        'role'  => 'member',
     ];
 }
 
 public function getHuwiyaUpdateAttributes(TokenClaims $claims): array
 {
-    // Only refresh name — leave role untouched.
     return ['name' => $claims->name];
 }
 ```
 
-Return `[]` from `getHuwiyaUpdateAttributes` to skip the update entirely on re-login.
+Return an empty array from `getHuwiyaUpdateAttributes()` to skip updates on re-login entirely.
 
-### Disable auto-registration
-
-By default, users that don't exist locally are created on first login. To reject unknown users:
+**Disable auto-registration.** By default, users that do not exist locally are created on first login. To reject unknown users:
 
 ```php
 public function shouldAutoRegister(): bool
@@ -169,21 +227,19 @@ public function shouldAutoRegister(): bool
 }
 ```
 
-Unknown users cause the callback to throw `Huwiya\Exceptions\HuwiyaUserNotFoundException`. Catch it in your exception handler to redirect wherever makes sense.
+When disabled, unknown users cause the callback to throw `Huwiya\Exceptions\HuwiyaUserNotFoundException`. Handle the exception in your application's exception handler to redirect appropriately.
 
-### Handy helpers
+**Helpers.** The trait exposes the following methods:
 
 ```php
-User::findByHuwiyaId('01HR...');          // Returns ?User
-User::findOrCreateFromHuwiya($claims);    // Called by the SDK internally
-$user->huwiyaToken;                       // TokenClaims on API requests
+User::findByHuwiyaId('01HR...');          // ?User
+User::findOrCreateFromHuwiya($claims);    // Called internally by the SDK
+$user->huwiyaToken;                       // TokenClaims (API requests only)
 ```
 
-## Customizing the Flows
+### Multiple Guards
 
-### Multiple guards
-
-You can register as many guards as you want using the `huwiya-web` and `huwiya-api` drivers — e.g. separate `admin` and `api` guards against different providers:
+You may register any number of guards using the `huwiya-web` and `huwiya-api` drivers — for example, separate `admin` and `api` guards backed by different providers:
 
 ```php
 'guards' => [
@@ -193,127 +249,133 @@ You can register as many guards as you want using the `huwiya-web` and `huwiya-a
 ],
 ```
 
-Because the OAuth callback is a single route, it needs to know which guard to log the user into. Set `HUWIYA_WEB_GUARD=admin` (default: `web`) to point the callback at a different guard. The session key is derived from that guard name, so `huwiya-web` instances reading the session stay in sync.
+Because the OAuth callback is a single route, it must know which guard to authenticate into. Set `HUWIYA_WEB_GUARD=admin` (default: `web`) to retarget the callback. The session key is derived from the guard name, so all `huwiya-web` instances reading that session remain consistent.
 
-### Handle authorization denial
+### Authorization Denial Handler
 
-When the user denies consent at the IdP, the callback runs a configurable handler. The default redirects to `/`. Override in a service provider:
-
-```php
-use Huwiya\Huwiya;
-// or: use Huwiya\Facades\Huwiya;
-
-public function boot(): void
-{
-    Huwiya::whenAuthorizationDenied(function (?string $error, ?string $description) {
-        return redirect()->route('login')->with('error', $description ?? 'Authorization denied.');
-    });
-}
-```
-
-The callback may declare zero, one (`$error`), or two (`$error`, `$description`) parameters — the package dispatches based on the closure's arity, so the zero-arg form keeps working.
-
-The callback is stored in a **container-scoped** singleton, so it resets per request under Octane/Swoole — no state leaks between requests.
-
-### Configure routes
-
-By default the package serves `/huwiya/redirect` and `/huwiya/callback`. To disable the bundled routes entirely (e.g. you mount your own controllers), set `HUWIYA_ROUTES_ENABLED=false`. To change the path prefix, set `HUWIYA_ROUTES_PREFIX=identity` (producing `/identity/redirect` and `/identity/callback`). Route names `huwiya.redirect` and `huwiya.callback` are stable regardless.
-
-### Facade
-
-A facade is available as an alternative to the static `Huwiya\Huwiya` class:
+When the user denies consent at the IdP, the callback dispatches a configurable handler. The default redirects to `/`. Override it in a service provider's `boot()` method:
 
 ```php
 use Huwiya\Facades\Huwiya;
 
-Huwiya::whenAuthorizationDenied(fn () => redirect('/denied'));
-Huwiya::actingAs($user, 'web');
+public function boot(): void
+{
+    Huwiya::whenAuthorizationDenied(function (?string $error, ?string $description) {
+        return redirect()
+            ->route('login')
+            ->with('error', $description ?? 'Authorization denied.');
+    });
+}
 ```
 
-### `actingAs` for tests
+The callback may declare zero, one, or two parameters; the package inspects its arity and dispatches accordingly. The handler is stored in a container-scoped singleton, so it resets per request under Laravel Octane and other resident runtimes.
 
-```php
-use Huwiya\Huwiya;
+### Routes
 
-Huwiya::actingAs($user, 'web');
-// or
-Huwiya::actingAs($user, 'api');
-```
+| Environment Variable     | Default   | Description                                         |
+| ------------------------ | --------- | --------------------------------------------------- |
+| `HUWIYA_ROUTES_ENABLED`  | `true`    | Disable the bundled routes when you mount your own. |
+| `HUWIYA_ROUTES_PREFIX`   | `huwiya`  | URL prefix for the bundled routes.                  |
 
-### Customize the stateful middleware
+Route names (`huwiya.redirect`, `huwiya.callback`) remain stable regardless of the prefix.
 
-Override the cookie / CSRF middleware classes used by `EnsureFrontendRequestsAreStateful` in `config/huwiya.php`. These entries are only consulted when you manually register `EnsureFrontendRequestsAreStateful` in your middleware stack.
+### Stateful Middleware
+
+You may swap the cookie and CSRF middleware used by `EnsureFrontendRequestsAreStateful` via `config/huwiya.php`. These settings are consulted only when the middleware is explicitly registered.
 
 ```php
 'middleware' => [
-    'encrypt_cookies' => \App\Http\Middleware\EncryptCookies::class,
+    'encrypt_cookies'     => \App\Http\Middleware\EncryptCookies::class,
     'validate_csrf_token' => \App\Http\Middleware\ValidateCsrfToken::class,
 ],
 ```
 
+## Testing Support
+
+The SDK provides a helper to authenticate a user within tests, bypassing the OAuth flow:
+
+```php
+use Huwiya\Facades\Huwiya;
+
+Huwiya::actingAs($user, 'web');
+Huwiya::actingAs($user, 'api');
+```
+
+The package's own test suite can be executed with:
+
+```bash
+composer test
+```
+
 ## Exceptions
 
-The package throws typed exceptions so you can target specific failures. All extend `Huwiya\Exceptions\HuwiyaException`, which extends `\RuntimeException` — so a broad catch on either works.
+All exceptions extend `Huwiya\Exceptions\HuwiyaException`, which in turn extends `\RuntimeException`. You may catch either to handle all SDK errors, or target specific failure modes individually.
 
-| Exception | Thrown when |
-| --- | --- |
-| `InvalidStateException` | OAuth callback `state` missing or does not match the session. |
-| `TokenExchangeException` | Token endpoint returned a non-2xx response or response body lacked `access_token`. |
-| `InvalidJwtFormatException` | JWT is malformed (wrong segment count, bad base64, bad JSON, missing `kid`, wrong `alg`). |
-| `InvalidTokenClaimsException` | JWT payload lacks one or more required claims (`sub`, `name`, `phone`). |
-| `JwksFetchException` | JWKS endpoint unreachable, non-2xx, or returned a body without a `keys` array. |
-| `UnknownKidException` | No key in the JWKS matched the JWT's `kid`, even after a cache refresh. |
-| `UnsupportedKeyTypeException` | JWKS key matched `kid` but its `kty` is not `RSA`. |
-| `AuthConfigurationException` | `auth.providers.{provider}.model` is missing, or the model does not use `InteractsWithHuwiya`. |
-| `HuwiyaUserNotFoundException` | Auto-registration disabled and no local user matches the incoming `sub`. |
+| Exception                        | Thrown when                                                                                        |
+| -------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `InvalidStateException`          | The OAuth callback `state` is missing or does not match the session.                               |
+| `TokenExchangeException`         | The token endpoint returned a non-2xx response or a body without `access_token`.                   |
+| `InvalidJwtFormatException`      | The JWT is malformed (wrong segment count, invalid base64, invalid JSON, missing `kid` or `alg`).  |
+| `InvalidTokenClaimsException`    | The JWT payload is missing one or more required claims (`sub`, `name`, `phone`).                   |
+| `JwksFetchException`             | The JWKS endpoint is unreachable, returned a non-2xx response, or returned no `keys` array.        |
+| `UnknownKidException`            | No JWKS key matches the JWT's `kid`, even after a cache refresh.                                   |
+| `UnsupportedKeyTypeException`    | A matched JWKS key has a `kty` other than `RSA`.                                                   |
+| `AuthConfigurationException`     | `auth.providers.{provider}.model` is missing, or the model does not use `InteractsWithHuwiya`.     |
+| `HuwiyaUserNotFoundException`    | Auto-registration is disabled and no local user matches the incoming `sub`.                        |
 
-Guard-level auth failures (expired tokens, bad signatures, wrong issuer/audience) do **not** throw — guards return `null`, so Laravel's standard `auth:*` middleware responds with 401 as usual.
+Guard-level authentication failures — expired tokens, invalid signatures, mismatched issuer or audience — do **not** throw. The guards return `null`, and Laravel's built-in `auth:*` middleware responds with `401 Unauthorized` as usual.
 
 ## Logging
 
-Set `HUWIYA_LOG_CHANNEL=huwiya` (or any channel configured in `config/logging.php`) to receive warnings for JWKS fetch failures, signature mismatches, token-exchange errors, and authorization denials. Secrets (tokens, client secrets) are never logged; response bodies are truncated to 200 characters.
+Set `HUWIYA_LOG_CHANNEL` to any channel configured in `config/logging.php` to receive warnings for JWKS fetch failures, signature mismatches, token-exchange errors, and authorization denials:
 
-Leave the env unset and logging is a no-op.
+```dotenv
+HUWIYA_LOG_CHANNEL=huwiya
+```
+
+Secrets (access tokens, client secrets) are never logged, and response bodies are truncated to 200 characters. When the variable is unset, logging is a no-op.
+
+## Security
+
+The SDK is designed to be secure by default:
+
+- **Signature verification** is on by default. Keys are fetched from the IdP's JWKS endpoint and matched by `kid`. The cache is invalidated automatically on unknown `kid` to support key rotation.
+- **Algorithm pinning.** The expected JWT algorithm is pinned to `RS256`. Downgrade attacks using `alg:none` or `HS256` are rejected.
+- **Claim validation.** Issuer (`iss`) and audience (`aud`) claims are validated by default.
+- **OAuth state** is required on the callback, compared using `hash_equals()` (timing-safe), and cleared from the session after use.
+- **Strict base64url decoding** is applied to every JWT segment — malformed inputs are rejected early.
+- **Session cookies** are marked `HttpOnly` and `SameSite=Lax` when the stateful middleware is active.
+- **Session fixation** is prevented by regenerating the session ID after a successful login.
+
+If you discover a security vulnerability, please email **info@hitaqnia.com** rather than opening a public issue.
 
 ## Configuration Reference
 
-All settings live in `config/huwiya.php`. Publish it if you want to edit the file directly:
+All settings are defined in `config/huwiya.php`.
 
-```bash
-php artisan vendor:publish --provider="Huwiya\HuwiyaServiceProvider" --tag="huwiya-config"
-```
+| Key                   | Environment Variable        | Default                                       | Description                                                                        |
+| --------------------- | --------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `url`                 | `HUWIYA_URL`                | `https://huwiya.id`                           | IdP base URL.                                                                      |
+| `project_id`          | `HUWIYA_PROJECT_ID`         | *(required)*                                  | Project grouping OAuth clients. Used as the expected `aud` claim.                  |
+| `client_id`           | `HUWIYA_CLIENT_ID`          | *(required)*                                  | OAuth client ID.                                                                   |
+| `client_secret`       | `HUWIYA_CLIENT_SECRET`      | *(required)*                                  | OAuth client secret.                                                               |
+| `redirect_uri`        | `HUWIYA_REDIRECT_URI`       | `{APP_URL}/huwiya/callback`                   | OAuth redirect URI. Must be registered on the IdP.                                 |
+| `routes.enabled`      | `HUWIYA_ROUTES_ENABLED`     | `true`                                        | Toggle the package-provided `/redirect` and `/callback` routes.                    |
+| `routes.prefix`       | `HUWIYA_ROUTES_PREFIX`      | `huwiya`                                      | URL prefix for the bundled routes.                                                 |
+| `web_guard`           | `HUWIYA_WEB_GUARD`          | `web`                                         | Guard the OAuth callback logs the user into.                                       |
+| `stateful`            | `HUWIYA_STATEFUL_DOMAINS`   | localhost + `APP_URL` host + `FRONTEND_URL`   | Domains that receive session-based authentication via the stateful middleware.     |
+| `auth_method`         | `HUWIYA_AUTH_METHOD`        | `basic`                                       | Client authentication method at the token endpoint: `basic` or `body`.             |
+| `verify_signature`    | `HUWIYA_VERIFY_SIGNATURE`   | `true`                                        | Disable only for local development. **Always on in production.**                   |
+| `algorithm`           | `HUWIYA_ALGORITHM`          | `RS256`                                       | Expected JWT signing algorithm. Mismatches are rejected.                           |
+| `jwks_uri`            | `HUWIYA_JWKS_URI`           | `{url}/{project_id}/.well-known/jwks.json`    | Override if the IdP serves keys from a different location.                         |
+| `leeway`              | `HUWIYA_TOKEN_LEEWAY`       | `60`                                          | Clock-skew tolerance for the `exp` claim, in seconds.                              |
+| `validate_issuer`     | `HUWIYA_VALIDATE_ISSUER`    | `true`                                        | Require the `iss` claim to match `url`.                                            |
+| `validate_audience`   | `HUWIYA_VALIDATE_AUDIENCE`  | `true`                                        | Require the `aud` claim to match `project_id`.                                     |
+| `log_channel`         | `HUWIYA_LOG_CHANNEL`        | `null`                                        | Log channel for diagnostics. Leave unset to disable logging.                       |
 
-| Key | Env | Default | Description |
-| --- | --- | --- | --- |
-| `url` | `HUWIYA_URL` | `https://huwiya.id` | IdP base URL. |
-| `project_id` | `HUWIYA_PROJECT_ID` | *(required)* | Project that groups OAuth clients. Used as the expected `aud` claim. |
-| `client_id` | `HUWIYA_CLIENT_ID` | *(required)* | OAuth client ID. |
-| `client_secret` | `HUWIYA_CLIENT_SECRET` | *(required)* | OAuth client secret. |
-| `redirect_uri` | `HUWIYA_REDIRECT_URI` | `{APP_URL}/huwiya/callback` | OAuth redirect. Must be registered on the IdP. |
-| `routes.enabled` | `HUWIYA_ROUTES_ENABLED` | `true` | Set to `false` to disable the package-provided `/redirect` and `/callback` routes. |
-| `routes.prefix` | `HUWIYA_ROUTES_PREFIX` | `huwiya` | URL prefix for the bundled routes. |
-| `web_guard` | `HUWIYA_WEB_GUARD` | `web` | The auth guard the OAuth callback logs the user into. |
-| `stateful` | `HUWIYA_STATEFUL_DOMAINS` | localhost + app host + `FRONTEND_URL` | Domains that get session-based auth via the stateful middleware. |
-| `auth_method` | `HUWIYA_AUTH_METHOD` | `basic` | `basic` (HTTP Basic Auth) or `body` for token-endpoint client credentials. |
-| `verify_signature` | `HUWIYA_VERIFY_SIGNATURE` | `true` | Disable only for local dev. **Always on in production.** |
-| `algorithm` | `HUWIYA_ALGORITHM` | `RS256` | Expected JWT signing algorithm. Mismatches are rejected (prevents alg-confusion). |
-| `jwks_uri` | `HUWIYA_JWKS_URI` | `{url}/{project_id}/.well-known/jwks.json` | Override if your IdP serves keys elsewhere. |
-| `leeway` | `HUWIYA_TOKEN_LEEWAY` | `60` | Seconds of clock-skew tolerance for `exp`. |
-| `validate_issuer` | `HUWIYA_VALIDATE_ISSUER` | `true` | Require `iss` to match `url`. |
-| `validate_audience` | `HUWIYA_VALIDATE_AUDIENCE` | `true` | Require `aud` to match `project_id`. |
-| `log_channel` | `HUWIYA_LOG_CHANNEL` | `null` | Log channel for diagnostics. Unset = no logging. |
+## Contributing
 
-## Security Notes
-
-- Signature verification is **on by default**. It uses the IdP's public JWKS, matched by `kid`. The cache auto-busts on unknown `kid` to handle key rotation.
-- `alg` is pinned to `RS256` — `alg:none` and `HS256` downgrades are rejected.
-- Issuer and audience are validated by default.
-- OAuth `state` is required on the callback, compared with `hash_equals` (timing-safe), and cleared from the session after use.
-- JWT header/payload/signature base64 segments use **strict** base64url decoding — malformed inputs are rejected early.
-- Sessions use `http_only` + `SameSite=Lax` when the stateful middleware is active.
-- Session regeneration runs after a successful login to prevent session fixation.
-
-## Testing
+Bug reports, feature requests, and pull requests are welcome on [GitHub](https://github.com/hitaqnia/huwiya-laravel). Please run the test suite before submitting a pull request:
 
 ```bash
 composer test
@@ -321,4 +383,4 @@ composer test
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+Released under the [MIT License](LICENSE).
