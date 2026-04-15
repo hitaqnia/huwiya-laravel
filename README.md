@@ -91,6 +91,8 @@ Schema::create('users', function (Blueprint $table) {
 });
 ```
 
+> **Identity lives on the IdP.** The `huwiya_id` column is the only attribute the package requires on your users table. Contact details such as `phone` and `email` are **not** part of the token claims, and the IdP does **not** expose them to third-party applications at all — they remain visible only to the user themselves. Design your app around the `huwiya_id` as the sole identifier, and collect any additional details you need directly from the user. Keeping your users table minimal avoids drift between your app and the identity source of truth.
+
 The macro defaults to a column named `huwiya_id`. You may pass a custom name — `$table->huwiyaIdentifier('sso_id')` — as long as it matches the column returned by `getHuwiyaIdentifierColumn()` on your model. The unique index is required: the package relies on it to prevent duplicate user rows under concurrent first-login requests.
 
 Next, add the `InteractsWithHuwiya` trait to your `User` model:
@@ -194,7 +196,7 @@ public function getHuwiyaIdentifierColumn(): string
 $table->huwiyaIdentifier('sso_id');
 ```
 
-**Attribute mapping.** Control which claim fields are persisted on first login and on subsequent logins:
+**Attribute mapping.** By default, the trait only persists `name`. Because identity — including `phone` and `email` — is owned by the IdP, the recommended approach is to keep the local projection minimal (ideally just `huwiya_id`) and fetch anything else from Huwiya on demand. If you do want to cache claim fields locally, override the two methods below. Any column you return here must already exist on your users table:
 
 ```php
 use Huwiya\TokenClaims;
@@ -216,7 +218,9 @@ public function getHuwiyaUpdateAttributes(TokenClaims $claims): array
 }
 ```
 
-Return an empty array from `getHuwiyaUpdateAttributes()` to skip updates on re-login entirely.
+Return an empty array from `getHuwiyaUpdateAttributes()` to skip updates on re-login entirely. Return an empty array from `getHuwiyaCreateAttributes()` as well if you want to store nothing beyond `huwiya_id`.
+
+> **Do not map `phone` or `email`.** These claims are not issued in the token — attempting to read `$claims->phone` or `$claims->email` will produce an undefined-property error. Query the IdP directly if you need them.
 
 **Disable auto-registration.** By default, users that do not exist locally are created on first login. To reject unknown users:
 
