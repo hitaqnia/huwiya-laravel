@@ -68,12 +68,24 @@ class HuwiyaServiceProvider extends ServiceProvider
     {
         Auth::resolved(function ($auth) {
             $auth->extend('huwiya-web', function ($app, $name, array $config) use ($auth) {
-                $provider = $auth->createUserProvider($config['provider'] ?? null);
-
-                return tap(
-                    new RequestGuard(new WebGuard($provider, $name), request(), $provider),
-                    fn ($guard) => $app->refresh('request', $guard, 'setRequest'),
+                $guard = new WebGuard(
+                    $name,
+                    $auth->createUserProvider($config['provider'] ?? null),
+                    $app['session.store'],
+                    rehashOnLogin: $app['config']->get('hashing.rehash_on_login', true),
+                    timeboxDuration: $app['config']->get('auth.timebox_duration', 200000),
+                    hashKey: $app['config']->get('app.key'),
                 );
+
+                $guard->setCookieJar($app['cookie']);
+                $guard->setDispatcher($app['events']);
+                $guard->setRequest($app->refresh('request', $guard, 'setRequest'));
+
+                if (isset($config['remember'])) {
+                    $guard->setRememberDuration($config['remember']);
+                }
+
+                return $guard;
             });
 
             $auth->extend('huwiya-api', function ($app, $name, array $config) use ($auth) {

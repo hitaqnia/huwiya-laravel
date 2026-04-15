@@ -9,6 +9,7 @@ use Huwiya\InteractsWithHuwiya;
 use Huwiya\Huwiya;
 use Huwiya\TokenClaims;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -92,10 +93,7 @@ class CallbackController
 
         $user = $model::findOrCreateFromHuwiya($claims);
 
-        $request->session()->put(
-            Huwiya::sessionKeyForGuard($guard),
-            $user->getAuthIdentifier(),
-        );
+        Auth::guard($guard)->login($user);
 
         $request->session()->regenerate();
 
