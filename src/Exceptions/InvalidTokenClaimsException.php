@@ -11,4 +11,9 @@ class InvalidTokenClaimsException extends HuwiyaException
     {
         return new self('Token claims are missing required keys: '.implode(', ', $missing).'.');
     }
+
+    public static function invalidUlid(string $id): self
+    {
+        return new self('Token claim "id" is not a valid ULID: '.$id.'.');
+    }
 }

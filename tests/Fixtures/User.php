@@ -10,7 +10,7 @@ class User extends Authenticatable
 {
     use HasFactory, InteractsWithHuwiya;
 
-    protected $fillable = ['name', 'phone'];
+    protected $fillable = ['name'];
 
     protected static function newFactory(): UserFactory
     {

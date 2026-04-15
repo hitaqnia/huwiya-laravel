@@ -8,5 +8,5 @@ class UserWithoutTrait extends Authenticatable
 {
     protected $table = 'users';
 
-    protected $fillable = ['name', 'huwiya_id', 'phone'];
+    protected $fillable = ['name', 'huwiya_id'];
 }

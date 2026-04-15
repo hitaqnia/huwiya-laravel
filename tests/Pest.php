@@ -81,6 +81,10 @@ function createTestJwt(
     $defaults = [
         'iat' => time(),
         'exp' => time() + 3600,
+        'locale' => 'en',
+        'zoneinfo' => 'Asia/Baghdad',
+        'theme' => 'light',
+        'scopes' => [],
     ];
 
     $payload = rtrim(strtr(base64_encode(json_encode(

@@ -14,7 +14,6 @@ class UserFactory extends Factory
         return [
             'name' => fake()->name(),
             'huwiya_id' => (string) Str::ulid(),
-            'phone' => fake()->unique()->e164PhoneNumber(),
         ];
     }
 }

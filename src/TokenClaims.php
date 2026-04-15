@@ -4,13 +4,20 @@ namespace Huwiya;
 
 use Huwiya\Exceptions\InvalidJwtFormatException;
 use Huwiya\Exceptions\InvalidTokenClaimsException;
+use Illuminate\Support\Str;
 
 class TokenClaims
 {
+    /**
+     * @param  list<string>  $scopes
+     */
     public function __construct(
         public readonly string $id,
         public readonly string $name,
-        public readonly string $phoneNumber,
+        public readonly string $locale,
+        public readonly string $zoneinfo,
+        public readonly string $theme,
+        public readonly array $scopes = [],
         public readonly ?string $issuer = null,
         public readonly ?int $issuedAt = null,
         public readonly ?int $expiresAt = null,
@@ -26,20 +33,33 @@ class TokenClaims
     {
         $missing = [];
 
-        foreach (['sub', 'name', 'phone'] as $required) {
+        foreach (['id', 'name', 'locale', 'zoneinfo', 'theme'] as $required) {
             if (! array_key_exists($required, $claims) || $claims[$required] === null || $claims[$required] === '') {
                 $missing[] = $required;
             }
+        }
+
+        if (! array_key_exists('scopes', $claims) || ! is_array($claims['scopes'])) {
+            $missing[] = 'scopes';
         }
 
         if ($missing !== []) {
             throw InvalidTokenClaimsException::missingKeys($missing);
         }
 
+        $id = (string) $claims['id'];
+
+        if (! Str::isUlid($id)) {
+            throw InvalidTokenClaimsException::invalidUlid($id);
+        }
+
         return new self(
-            id: (string) $claims['sub'],
+            id: $id,
             name: (string) $claims['name'],
-            phoneNumber: (string) $claims['phone'],
+            locale: (string) $claims['locale'],
+            zoneinfo: (string) $claims['zoneinfo'],
+            theme: (string) $claims['theme'],
+            scopes: array_values(array_map('strval', $claims['scopes'])),
             issuer: isset($claims['iss']) ? (string) $claims['iss'] : null,
             issuedAt: isset($claims['iat']) ? (int) $claims['iat'] : null,
             expiresAt: isset($claims['exp']) ? (int) $claims['exp'] : null,

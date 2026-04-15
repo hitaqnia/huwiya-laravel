@@ -55,7 +55,6 @@ trait InteractsWithHuwiya
     {
         return [
             'name' => $claims->name,
-            'phone' => $claims->phoneNumber,
         ];
     }
 
@@ -68,7 +67,6 @@ trait InteractsWithHuwiya
     {
         return [
             'name' => $claims->name,
-            'phone' => $claims->phoneNumber,
         ];
     }
 

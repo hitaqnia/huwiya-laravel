@@ -29,9 +29,8 @@ it('authenticates a user with a valid JWT bearer token', function () {
     $user = User::factory()->create();
 
     $jwt = createTestJwt([
-        'sub' => $user->huwiya_id,
+        'id' => $user->huwiya_id,
         'name' => $user->name,
-        'phone' => $user->phone,
     ]);
 
     $this->getJson('/test/me', ['Authorization' => "Bearer {$jwt}"])
@@ -56,9 +55,8 @@ it('rejects requests with a tampered JWT payload', function () {
     $user = User::factory()->create();
 
     $jwt = createTestJwt([
-        'sub' => $user->huwiya_id,
+        'id' => $user->huwiya_id,
         'name' => $user->name,
-        'phone' => $user->phone,
     ]);
 
     // Tamper with the payload
@@ -80,9 +78,8 @@ it('rejects requests with an expired JWT', function () {
     $user = User::factory()->create();
 
     $jwt = createTestJwt([
-        'sub' => $user->huwiya_id,
+        'id' => $user->huwiya_id,
         'name' => $user->name,
-        'phone' => $user->phone,
         'exp' => time() - 200,
     ]);
 
@@ -94,9 +91,8 @@ it('allows tokens within the leeway window', function () {
     $user = User::factory()->create();
 
     $jwt = createTestJwt([
-        'sub' => $user->huwiya_id,
+        'id' => $user->huwiya_id,
         'name' => $user->name,
-        'phone' => $user->phone,
         'exp' => time() - 30,
     ]);
 
@@ -105,10 +101,11 @@ it('allows tokens within the leeway window', function () {
 });
 
 it('auto-registers a new user from a valid JWT', function () {
+    $newId = (string) \Illuminate\Support\Str::ulid();
+
     $jwt = createTestJwt([
-        'sub' => 'new-huwiya-id',
+        'id' => $newId,
         'name' => 'New User',
-        'phone' => '+1234567890',
     ]);
 
     $this->getJson('/test/me', ['Authorization' => "Bearer {$jwt}"])
@@ -118,9 +115,8 @@ it('auto-registers a new user from a valid JWT', function () {
         ]);
 
     $this->assertDatabaseHas('users', [
-        'huwiya_id' => 'new-huwiya-id',
+        'huwiya_id' => $newId,
         'name' => 'New User',
-        'phone' => '+1234567890',
     ]);
 });
 
@@ -137,9 +133,8 @@ it('attaches token claims to the authenticated user', function () {
     });
 
     $jwt = createTestJwt([
-        'sub' => $user->huwiya_id,
+        'id' => $user->huwiya_id,
         'name' => $user->name,
-        'phone' => $user->phone,
     ]);
 
     $this->getJson('/test/claims', ['Authorization' => "Bearer {$jwt}"])
@@ -158,9 +153,12 @@ it('skips signature verification when disabled', function () {
     // Create a JWT with a completely random signature (no valid key)
     $header = rtrim(strtr(base64_encode(json_encode(['alg' => 'RS256', 'typ' => 'JWT'])), '+/', '-_'), '=');
     $payload = rtrim(strtr(base64_encode(json_encode([
-        'sub' => $user->huwiya_id,
+        'id' => $user->huwiya_id,
         'name' => $user->name,
-        'phone' => $user->phone,
+        'locale' => 'en',
+        'zoneinfo' => 'Asia/Baghdad',
+        'theme' => 'light',
+        'scopes' => [],
         'exp' => time() + 3600,
     ])), '+/', '-_'), '=');
     $fakeSignature = rtrim(strtr(base64_encode('not-a-real-signature'), '+/', '-_'), '=');
@@ -181,9 +179,8 @@ it('rejects JWT signed with a different key', function () {
     ]);
 
     $jwt = createTestJwt([
-        'sub' => $user->huwiya_id,
+        'id' => $user->huwiya_id,
         'name' => $user->name,
-        'phone' => $user->phone,
     ], $wrongKey);
 
     $this->getJson('/test/me', ['Authorization' => "Bearer {$jwt}"])

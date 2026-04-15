@@ -43,7 +43,6 @@ abstract class TestCase extends OrchestraTestCase
             $table->id();
             $table->string('name');
             $table->ulid('huwiya_id')->unique();
-            $table->string('phone')->unique();
             $table->timestamps();
         });
 

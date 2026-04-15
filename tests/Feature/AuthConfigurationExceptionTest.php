@@ -25,9 +25,8 @@ it('throws AuthConfigurationException when the auth provider model is missing', 
 
     $user = User::factory()->create();
     $jwt = createTestJwt([
-        'sub' => $user->huwiya_id,
+        'id' => $user->huwiya_id,
         'name' => $user->name,
-        'phone' => $user->phone,
     ]);
 
     $this->withoutExceptionHandling();
@@ -46,9 +45,8 @@ it('throws AuthConfigurationException when the model does not use InteractsWithH
 
     $user = User::factory()->create();
     $jwt = createTestJwt([
-        'sub' => $user->huwiya_id,
+        'id' => $user->huwiya_id,
         'name' => $user->name,
-        'phone' => $user->phone,
     ]);
 
     $this->withoutExceptionHandling();

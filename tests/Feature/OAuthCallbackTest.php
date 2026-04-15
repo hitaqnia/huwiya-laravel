@@ -37,10 +37,11 @@ it('stores state in the session during redirect', function () {
 });
 
 it('exchanges code for token and creates a new user', function () {
+    $newId = (string) \Illuminate\Support\Str::ulid();
+
     $jwt = createTestJwt([
-        'sub' => 'new-user-id',
+        'id' => $newId,
         'name' => 'John Doe',
-        'phone' => '+1234567890',
     ]);
 
     Http::fake([
@@ -55,22 +56,20 @@ it('exchanges code for token and creates a new user', function () {
 
     $response->assertRedirect('/');
     $this->assertDatabaseHas('users', [
-        'huwiya_id' => 'new-user-id',
+        'huwiya_id' => $newId,
         'name' => 'John Doe',
-        'phone' => '+1234567890',
     ]);
 });
 
 it('updates an existing user on callback', function () {
     $user = User::factory()->create([
-        'huwiya_id' => 'existing-user-id',
+        'huwiya_id' => (string) \Illuminate\Support\Str::ulid(),
         'name' => 'Old Name',
     ]);
 
     $jwt = createTestJwt([
-        'sub' => 'existing-user-id',
+        'id' => $user->huwiya_id,
         'name' => 'Updated Name',
-        'phone' => $user->phone,
     ]);
 
     Http::fake([
@@ -108,9 +107,8 @@ it('sends client credentials via HTTP Basic Auth by default', function () {
     config(['huwiya.auth_method' => 'basic']);
 
     $jwt = createTestJwt([
-        'sub' => 'user-id',
+        'id' => (string) \Illuminate\Support\Str::ulid(),
         'name' => 'Test',
-        'phone' => '+222',
     ]);
 
     Http::fake([
@@ -134,9 +132,8 @@ it('sends client credentials in body when auth_method is body', function () {
     config(['huwiya.auth_method' => 'body']);
 
     $jwt = createTestJwt([
-        'sub' => 'user-id',
+        'id' => (string) \Illuminate\Support\Str::ulid(),
         'name' => 'Test',
-        'phone' => '+333',
     ]);
 
     Http::fake([
@@ -157,9 +154,8 @@ it('sends client credentials in body when auth_method is body', function () {
 
 it('redirects to intended URL after login', function () {
     $jwt = createTestJwt([
-        'sub' => 'user-id',
+        'id' => (string) \Illuminate\Support\Str::ulid(),
         'name' => 'Test',
-        'phone' => '+111',
     ]);
 
     Http::fake([

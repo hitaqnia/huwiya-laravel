@@ -30,10 +30,17 @@ it('extends RuntimeException so host apps can catch broadly', function () {
 });
 
 it('builds InvalidTokenClaimsException with missingKeys factory', function () {
-    $exception = InvalidTokenClaimsException::missingKeys(['sub', 'phone']);
+    $exception = InvalidTokenClaimsException::missingKeys(['id', 'locale']);
 
-    expect($exception->getMessage())->toContain('sub')
-        ->and($exception->getMessage())->toContain('phone');
+    expect($exception->getMessage())->toContain('id')
+        ->and($exception->getMessage())->toContain('locale');
+});
+
+it('builds InvalidTokenClaimsException with invalidUlid factory', function () {
+    $exception = InvalidTokenClaimsException::invalidUlid('bad-id');
+
+    expect($exception->getMessage())->toContain('bad-id')
+        ->and($exception->getMessage())->toContain('ULID');
 });
 
 it('builds UnknownKidException with kid factory', function () {

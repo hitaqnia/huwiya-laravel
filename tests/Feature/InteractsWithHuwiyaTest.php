@@ -2,6 +2,19 @@
 
 use Huwiya\Tests\Fixtures\User;
 use Huwiya\TokenClaims;
+use Illuminate\Support\Str;
+
+function makeTestClaims(array $overrides = []): TokenClaims
+{
+    return new TokenClaims(
+        id: $overrides['id'] ?? (string) Str::ulid(),
+        name: $overrides['name'] ?? 'Test User',
+        locale: $overrides['locale'] ?? 'en',
+        zoneinfo: $overrides['zoneinfo'] ?? 'Asia/Baghdad',
+        theme: $overrides['theme'] ?? 'light',
+        scopes: $overrides['scopes'] ?? [],
+    );
+}
 
 it('finds an existing user by huwiya id', function () {
     $user = User::factory()->create();
@@ -19,11 +32,10 @@ it('returns null when user is not found by huwiya id', function () {
 it('finds and updates an existing user from claims', function () {
     $user = User::factory()->create(['name' => 'Old Name']);
 
-    $claims = new TokenClaims(
-        id: $user->huwiya_id,
-        name: 'New Name',
-        phoneNumber: '+9999999999',
-    );
+    $claims = makeTestClaims([
+        'id' => $user->huwiya_id,
+        'name' => 'New Name',
+    ]);
 
     $result = User::findOrCreateFromHuwiya($claims);
 
@@ -32,19 +44,19 @@ it('finds and updates an existing user from claims', function () {
 });
 
 it('creates a new user from claims when auto-registration is enabled', function () {
-    $claims = new TokenClaims(
-        id: 'new-huwiya-id',
-        name: 'New User',
-        phoneNumber: '+1111111111',
-    );
+    $newId = (string) Str::ulid();
+
+    $claims = makeTestClaims([
+        'id' => $newId,
+        'name' => 'New User',
+    ]);
 
     $user = User::findOrCreateFromHuwiya($claims);
 
     expect($user)->toBeInstanceOf(User::class)
         ->and($user->exists)->toBeTrue()
-        ->and($user->huwiya_id)->toBe('new-huwiya-id')
-        ->and($user->name)->toBe('New User')
-        ->and($user->phone)->toBe('+1111111111');
+        ->and($user->huwiya_id)->toBe($newId)
+        ->and($user->name)->toBe('New User');
 });
 
 it('uses the configured identifier column', function () {
@@ -55,19 +67,13 @@ it('uses the configured identifier column', function () {
 
 it('returns default create and update attributes', function () {
     $user = new User;
-    $claims = new TokenClaims(
-        id: 'test',
-        name: 'Test User',
-        phoneNumber: '+123',
-    );
+    $claims = makeTestClaims(['name' => 'Test User']);
 
     expect($user->getHuwiyaCreateAttributes($claims))->toBe([
         'name' => 'Test User',
-        'phone' => '+123',
     ]);
 
     expect($user->getHuwiyaUpdateAttributes($claims))->toBe([
         'name' => 'Test User',
-        'phone' => '+123',
     ]);
 });

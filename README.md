@@ -77,7 +77,7 @@ All other settings fall back to sensible defaults, including the IdP base URL (`
 
 ### Preparing the User Model
 
-Every authenticated user is identified by a `huwiya_id` column, which stores the `sub` claim issued by the IdP. The package ships a Blueprint macro that creates this column with the correct type and constraints:
+Every authenticated user is identified by a `huwiya_id` column, which stores the `id` claim (a ULID) issued by the IdP. The package ships a Blueprint macro that creates this column with the correct type and constraints:
 
 ```php
 use Illuminate\Database\Schema\Blueprint;
@@ -87,7 +87,6 @@ Schema::create('users', function (Blueprint $table) {
     $table->id();
     $table->string('name');
     $table->huwiyaIdentifier();
-    $table->string('phone')->unique();
     $table->timestamps();
 });
 ```
@@ -104,7 +103,7 @@ class User extends Authenticatable
 {
     use InteractsWithHuwiya;
 
-    protected $fillable = ['name', 'phone'];
+    protected $fillable = ['name'];
 }
 ```
 
@@ -203,10 +202,11 @@ use Huwiya\TokenClaims;
 public function getHuwiyaCreateAttributes(TokenClaims $claims): array
 {
     return [
-        'name'  => $claims->name,
-        'phone' => $claims->phoneNumber,
-        'email' => $claims->email ?? null,
-        'role'  => 'member',
+        'name'     => $claims->name,
+        'locale'   => $claims->locale,
+        'timezone' => $claims->zoneinfo,
+        'theme'    => $claims->theme,
+        'role'     => 'member',
     ];
 }
 
@@ -316,7 +316,7 @@ All exceptions extend `Huwiya\Exceptions\HuwiyaException`, which in turn extends
 | `InvalidStateException`          | The OAuth callback `state` is missing or does not match the session.                               |
 | `TokenExchangeException`         | The token endpoint returned a non-2xx response or a body without `access_token`.                   |
 | `InvalidJwtFormatException`      | The JWT is malformed (wrong segment count, invalid base64, invalid JSON, missing `kid` or `alg`).  |
-| `InvalidTokenClaimsException`    | The JWT payload is missing one or more required claims (`sub`, `name`, `phone`).                   |
+| `InvalidTokenClaimsException`    | The JWT payload is missing a required claim (`id`, `name`, `locale`, `zoneinfo`, `theme`, `scopes`) or `id` is not a valid ULID. |
 | `JwksFetchException`             | The JWKS endpoint is unreachable, returned a non-2xx response, or returned no `keys` array.        |
 | `UnknownKidException`            | No JWKS key matches the JWT's `kid`, even after a cache refresh.                                   |
 | `UnsupportedKeyTypeException`    | A matched JWKS key has a `kty` other than `RSA`.                                                   |
