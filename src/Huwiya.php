@@ -2,15 +2,19 @@
 
 namespace Huwiya;
 
+use Huwiya\Exceptions\AuthConfigurationException;
+use Huwiya\Exceptions\InvalidGuardException;
 use Huwiya\Exceptions\InvalidJwtFormatException;
 use Huwiya\Exceptions\JwksFetchException;
 use Huwiya\Exceptions\UnknownKidException;
 use Huwiya\Exceptions\UnsupportedKeyTypeException;
 use Huwiya\Support\AuthorizationDeniedCallback;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Psr\Log\LoggerInterface;
 
 class Huwiya
@@ -43,6 +47,70 @@ class Huwiya
         }
 
         return redirect('/');
+    }
+
+    /**
+     * Initiate an OAuth authorization redirect bound to a specific web guard.
+     *
+     * The guard is validated against the auth config and stored atomically
+     * alongside the OAuth state in a single session entry, so the callback
+     * resolves the guard from the bound session payload rather than config.
+     */
+    public static function redirect(string $guard): RedirectResponse
+    {
+        static::assertGuardIsHuwiyaWeb($guard);
+
+        $state = Str::random(40);
+
+        session()->put('huwiya.oauth', [
+            'state' => $state,
+            'guard' => $guard,
+        ]);
+
+        $query = http_build_query([
+            'client_id' => config('huwiya.client_id'),
+            'redirect_uri' => config('huwiya.redirect_uri'),
+            'response_type' => 'code',
+            'state' => $state,
+        ]);
+
+        return redirect(config('huwiya.url').'/oauth/authorize?'.$query);
+    }
+
+    /**
+     * Assert that the named guard is registered with the huwiya-web driver
+     * and that its provider's model uses the InteractsWithHuwiya trait.
+     *
+     * Runs at both redirect time (fail fast) and callback time (defense
+     * in depth — the guard may have been removed or altered between the
+     * two requests).
+     */
+    public static function assertGuardIsHuwiyaWeb(string $guard): void
+    {
+        if ($guard === '') {
+            throw new InvalidGuardException('A guard name is required.');
+        }
+
+        $guardConfig = config("auth.guards.{$guard}");
+
+        if (! is_array($guardConfig)) {
+            throw new InvalidGuardException("Auth guard [{$guard}] is not configured.");
+        }
+
+        if (($guardConfig['driver'] ?? null) !== 'huwiya-web') {
+            throw new InvalidGuardException("Auth guard [{$guard}] must use the [huwiya-web] driver.");
+        }
+
+        $provider = $guardConfig['provider'] ?? null;
+        $model = $provider ? config("auth.providers.{$provider}.model") : null;
+
+        if (! $model) {
+            throw new AuthConfigurationException("Unable to determine user model for guard [{$guard}].");
+        }
+
+        if (! in_array(InteractsWithHuwiya::class, class_uses_recursive($model), true)) {
+            throw new AuthConfigurationException("The model [{$model}] must use the InteractsWithHuwiya trait.");
+        }
     }
 
     /**

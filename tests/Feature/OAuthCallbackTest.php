@@ -1,5 +1,6 @@
 <?php
 
+use Huwiya\Huwiya;
 use Huwiya\Tests\Fixtures\User;
 use Illuminate\Support\Facades\Http;
 
@@ -9,7 +10,6 @@ beforeEach(function () {
         'huwiya.client_id' => 'test-client-id',
         'huwiya.client_secret' => 'test-client-secret',
         'huwiya.redirect_uri' => 'https://app.test/huwiya/callback',
-        'huwiya.web_guard' => 'web',
         'auth.guards.web' => [
             'driver' => 'huwiya-web',
             'provider' => 'users',
@@ -18,22 +18,23 @@ beforeEach(function () {
 });
 
 it('redirects to the IdP authorization endpoint', function () {
-    $response = $this->get('/huwiya/redirect');
+    $response = Huwiya::redirect('web');
 
-    $response->assertRedirect();
-
-    $location = $response->headers->get('Location');
+    $location = $response->getTargetUrl();
 
     expect($location)->toStartWith('https://idp.example.com/oauth/authorize')
         ->and($location)->toContain('client_id=test-client-id')
         ->and($location)->toContain('response_type=code');
 });
 
-it('stores state in the session during redirect', function () {
-    $this->get('/huwiya/redirect');
+it('stores state and guard atomically in the session during redirect', function () {
+    Huwiya::redirect('web');
 
-    expect(session('state'))->not->toBeNull()
-        ->and(session('state'))->toHaveLength(40);
+    $payload = session('huwiya.oauth');
+
+    expect($payload)->toBeArray()
+        ->and($payload['state'])->toBeString()->toHaveLength(40)
+        ->and($payload['guard'])->toBe('web');
 });
 
 it('exchanges code for token and creates a new user', function () {
@@ -51,7 +52,7 @@ it('exchanges code for token and creates a new user', function () {
         ]),
     ]);
 
-    $response = $this->withSession(['state' => 'valid-state'])
+    $response = $this->withSession(['huwiya.oauth' => ['state' => 'valid-state', 'guard' => 'web']])
         ->get('/huwiya/callback?code=auth-code&state=valid-state');
 
     $response->assertRedirect('/');
@@ -79,14 +80,14 @@ it('updates an existing user on callback', function () {
         ]),
     ]);
 
-    $this->withSession(['state' => 'valid-state'])
+    $this->withSession(['huwiya.oauth' => ['state' => 'valid-state', 'guard' => 'web']])
         ->get('/huwiya/callback?code=auth-code&state=valid-state');
 
     expect($user->fresh()->name)->toBe('Updated Name');
 });
 
 it('rejects callback with invalid state', function () {
-    $this->withSession(['state' => 'correct-state'])
+    $this->withSession(['huwiya.oauth' => ['state' => 'correct-state', 'guard' => 'web']])
         ->get('/huwiya/callback?code=auth-code&state=wrong-state')
         ->assertStatus(500);
 });
@@ -97,7 +98,7 @@ it('rejects callback with missing state', function () {
 });
 
 it('handles authorization denial from IdP', function () {
-    $response = $this->withSession(['state' => 'valid-state'])
+    $response = $this->withSession(['huwiya.oauth' => ['state' => 'valid-state', 'guard' => 'web']])
         ->get('/huwiya/callback?error=access_denied&state=valid-state');
 
     $response->assertRedirect('/');
@@ -118,7 +119,7 @@ it('sends client credentials via HTTP Basic Auth by default', function () {
         ]),
     ]);
 
-    $this->withSession(['state' => 'valid-state'])
+    $this->withSession(['huwiya.oauth' => ['state' => 'valid-state', 'guard' => 'web']])
         ->get('/huwiya/callback?code=auth-code&state=valid-state');
 
     Http::assertSent(function ($request) {
@@ -143,7 +144,7 @@ it('sends client credentials in body when auth_method is body', function () {
         ]),
     ]);
 
-    $this->withSession(['state' => 'valid-state'])
+    $this->withSession(['huwiya.oauth' => ['state' => 'valid-state', 'guard' => 'web']])
         ->get('/huwiya/callback?code=auth-code&state=valid-state');
 
     Http::assertSent(function ($request) {
@@ -166,7 +167,7 @@ it('redirects to intended URL after login', function () {
     ]);
 
     $response = $this->withSession([
-        'state' => 'valid-state',
+        'huwiya.oauth' => ['state' => 'valid-state', 'guard' => 'web'],
         'url.intended' => '/dashboard',
     ])->get('/huwiya/callback?code=auth-code&state=valid-state');
 

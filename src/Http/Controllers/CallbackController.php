@@ -2,10 +2,8 @@
 
 namespace Huwiya\Http\Controllers;
 
-use Huwiya\Exceptions\AuthConfigurationException;
 use Huwiya\Exceptions\InvalidStateException;
 use Huwiya\Exceptions\TokenExchangeException;
-use Huwiya\InteractsWithHuwiya;
 use Huwiya\Huwiya;
 use Huwiya\TokenClaims;
 use Illuminate\Http\Request;
@@ -29,9 +27,20 @@ class CallbackController
             return Huwiya::denied($error, $description);
         }
 
-        $state = $request->session()->pull('state');
+        $bound = $request->session()->pull('huwiya.oauth');
 
-        if (! is_string($state) || $state === '' || ! hash_equals($state, (string) $request->input('state'))) {
+        if (! is_array($bound)
+            || ! isset($bound['state'], $bound['guard'])
+            || ! is_string($bound['state']) || $bound['state'] === ''
+            || ! is_string($bound['guard']) || $bound['guard'] === ''
+        ) {
+            throw new InvalidStateException('Missing or malformed OAuth session payload.');
+        }
+
+        $state = $bound['state'];
+        $guard = $bound['guard'];
+
+        if (! hash_equals($state, (string) $request->input('state'))) {
             throw new InvalidStateException('Invalid state value.');
         }
 
@@ -71,25 +80,18 @@ class CallbackController
 
         $claims = TokenClaims::fromJwt($accessToken);
 
-        return $this->authenticateUser($claims, $request);
+        return $this->authenticateUser($claims, $request, $guard);
     }
 
     /**
      * Authenticate the user from the token claims and log them in via session.
      */
-    protected function authenticateUser(TokenClaims $claims, Request $request): Response
+    protected function authenticateUser(TokenClaims $claims, Request $request, string $guard): Response
     {
-        $guard = config('huwiya.web_guard', 'web');
-        $provider = config("auth.guards.{$guard}.provider", 'users');
+        Huwiya::assertGuardIsHuwiyaWeb($guard);
+
+        $provider = config("auth.guards.{$guard}.provider");
         $model = config("auth.providers.{$provider}.model");
-
-        if (! $model) {
-            throw new AuthConfigurationException('Unable to determine user model from auth configuration.');
-        }
-
-        if (! in_array(InteractsWithHuwiya::class, class_uses_recursive($model), true)) {
-            throw new AuthConfigurationException("The model [{$model}] must use the InteractsWithHuwiya trait.");
-        }
 
         $user = $model::findOrCreateFromHuwiya($claims);
 

@@ -5,6 +5,7 @@ namespace Huwiya\Support;
 use Huwiya\Huwiya;
 use Huwiya\TokenClaims;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Http\RedirectResponse;
 
 /**
  * Thin instance wrapper around the static Huwiya helpers, bound in the
@@ -22,6 +23,16 @@ class HuwiyaManager
     public function denied(?string $error = null, ?string $description = null): mixed
     {
         return Huwiya::denied($error, $description);
+    }
+
+    public function redirect(string $guard): RedirectResponse
+    {
+        return Huwiya::redirect($guard);
+    }
+
+    public function assertGuardIsHuwiyaWeb(string $guard): void
+    {
+        Huwiya::assertGuardIsHuwiyaWeb($guard);
     }
 
     public function decodeAndVerifyToken(string $token): ?TokenClaims

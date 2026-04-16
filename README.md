@@ -17,7 +17,8 @@ The official Laravel SDK for the [Huwiya](https://huwiya.id) Identity Provider. 
 - [Usage](#usage)
   - [Preparing the User Model](#preparing-the-user-model)
   - [Registering Guards](#registering-guards)
-  - [Built-in Routes](#built-in-routes)
+  - [Initiating a Login](#initiating-a-login)
+  - [Callback Route](#callback-route)
 - [How It Works](#how-it-works)
   - [Web Flow](#web-flow)
   - [API Flow](#api-flow)
@@ -26,7 +27,6 @@ The official Laravel SDK for the [Huwiya](https://huwiya.id) Identity Provider. 
   - [User Mapping](#user-mapping)
   - [Multiple Guards](#multiple-guards)
   - [Authorization Denial Handler](#authorization-denial-handler)
-  - [Routes](#routes)
   - [Stateful Middleware](#stateful-middleware)
 - [Testing Support](#testing-support)
 - [Exceptions](#exceptions)
@@ -130,24 +130,32 @@ Switch your web and/or API guards in `config/auth.php` to the drivers provided b
 ],
 ```
 
-### Built-in Routes
+### Initiating a Login
 
-Out of the box, the package registers two routes:
+The SDK does **not** ship a bundled redirect route. You initiate the OAuth flow by calling `Huwiya::redirect($guard)` from a route you own, passing the guard the user should be logged into:
 
-| Method | URI                  | Name              | Description                                  |
-| ------ | -------------------- | ----------------- | -------------------------------------------- |
-| `GET`  | `/huwiya/redirect`   | `huwiya.redirect` | Initiates the OAuth 2.0 authorization flow. |
-| `GET`  | `/huwiya/callback`   | `huwiya.callback` | Handles the authorization server response.   |
+```php
+use Huwiya\Facades\Huwiya;
 
-Authenticated API requests are handled transparently by the `huwiya-api` guard — no additional routes are required.
+Route::get('/login', fn () => Huwiya::redirect('web'))->name('login');
+Route::get('/admin/login', fn () => Huwiya::redirect('admin'))->name('admin.login');
+```
+
+The guard name must be a PHP literal in your own code. This keeps the choice of guard entirely server-side — users cannot influence it by tampering with a query string or form field.
+
+`Huwiya::redirect()` validates the guard (it must be registered with the `huwiya-web` driver and point at a provider whose model uses `InteractsWithHuwiya`), stores the guard atomically alongside the OAuth `state` in the session, and returns a `RedirectResponse` to the IdP's authorize endpoint. Passing an empty, unknown, or non-`huwiya-web` guard throws `Huwiya\Exceptions\InvalidGuardException`.
+
+### Callback Route
+
+A single callback route is registered automatically at the fixed path `/huwiya/callback` (name: `huwiya.callback`). Register this URL with the IdP as an allowed redirect URI, or override it via `HUWIYA_REDIRECT_URI` to match a custom host. Authenticated API requests are handled transparently by the `huwiya-api` guard — no additional routes are required.
 
 ## How It Works
 
 ### Web Flow
 
-1. The user visits `/huwiya/redirect`. The package generates a cryptographically random `state` value, stores it in the session, and redirects to the IdP.
-2. The IdP redirects back to `/huwiya/callback`. The package verifies the state using a timing-safe comparison, exchanges the authorization code for a JWT at `{url}/oauth/token`, decodes the claims, and invokes `User::findOrCreateFromHuwiya($claims)`.
-3. The user is authenticated into the session. Subsequent requests are authenticated by the `huwiya-web` guard.
+1. The user hits a route in your application that calls `Huwiya::redirect($guard)`. The package validates that the named guard uses the `huwiya-web` driver, generates a cryptographically random `state`, stores `['state' => ..., 'guard' => ...]` atomically under the session key `huwiya.oauth`, and redirects to the IdP.
+2. The IdP redirects back to `/huwiya/callback`. The package pulls (and clears) the bound session payload, verifies the `state` with a timing-safe comparison, re-validates the guard against the current auth configuration, exchanges the authorization code for a JWT at `{url}/oauth/token`, decodes the claims, and invokes `User::findOrCreateFromHuwiya($claims)`.
+3. The user is authenticated into the guard that was bound at redirect time. Subsequent requests are authenticated by that `huwiya-web` guard.
 
 After a successful login, the callback issues `redirect()->intended('/')`, so any `url.intended` value your middleware sets will be honoured.
 
@@ -253,7 +261,16 @@ You may register any number of guards using the `huwiya-web` and `huwiya-api` dr
 ],
 ```
 
-Because the OAuth callback is a single route, it must know which guard to authenticate into. Set `HUWIYA_WEB_GUARD=admin` (default: `web`) to retarget the callback. The session key is derived from the guard name, so all `huwiya-web` instances reading that session remain consistent.
+The callback route is shared by every `huwiya-web` guard. The guard the user will be logged into is decided when you call `Huwiya::redirect($guard)`, and travels with the OAuth `state` in a single atomic session entry. Expose a separate login route per portal and pass the correct guard from each:
+
+```php
+use Huwiya\Facades\Huwiya;
+
+Route::get('/login', fn () => Huwiya::redirect('web'));
+Route::get('/admin/login', fn () => Huwiya::redirect('admin'));
+```
+
+Because the guard name is a server-side PHP literal in each route, users cannot log into a guard you did not intend. The callback re-validates the bound guard against the current auth config before calling `login()` — if the guard is removed or its driver is changed between the redirect and the callback, the request fails rather than silently falling through to another guard.
 
 ### Authorization Denial Handler
 
@@ -273,15 +290,6 @@ public function boot(): void
 ```
 
 The callback may declare zero, one, or two parameters; the package inspects its arity and dispatches accordingly. The handler is stored in a container-scoped singleton, so it resets per request under Laravel Octane and other resident runtimes.
-
-### Routes
-
-| Environment Variable     | Default   | Description                                         |
-| ------------------------ | --------- | --------------------------------------------------- |
-| `HUWIYA_ROUTES_ENABLED`  | `true`    | Disable the bundled routes when you mount your own. |
-| `HUWIYA_ROUTES_PREFIX`   | `huwiya`  | URL prefix for the bundled routes.                  |
-
-Route names (`huwiya.redirect`, `huwiya.callback`) remain stable regardless of the prefix.
 
 ### Stateful Middleware
 
@@ -317,7 +325,8 @@ All exceptions extend `Huwiya\Exceptions\HuwiyaException`, which in turn extends
 
 | Exception                        | Thrown when                                                                                        |
 | -------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `InvalidStateException`          | The OAuth callback `state` is missing or does not match the session.                               |
+| `InvalidGuardException`          | `Huwiya::redirect()` received an empty, unknown, or non-`huwiya-web` guard name.                   |
+| `InvalidStateException`          | The OAuth callback session payload is missing or malformed, or the returned `state` does not match. |
 | `TokenExchangeException`         | The token endpoint returned a non-2xx response or a body without `access_token`.                   |
 | `InvalidJwtFormatException`      | The JWT is malformed (wrong segment count, invalid base64, invalid JSON, missing `kid` or `alg`).  |
 | `InvalidTokenClaimsException`    | The JWT payload is missing a required claim (`id`, `name`, `locale`, `zoneinfo`, `theme`, `scopes`) or `id` is not a valid ULID. |
@@ -346,7 +355,8 @@ The SDK is designed to be secure by default:
 - **Signature verification** is on by default. Keys are fetched from the IdP's JWKS endpoint and matched by `kid`. The cache is invalidated automatically on unknown `kid` to support key rotation.
 - **Algorithm pinning.** The expected JWT algorithm is pinned to `RS256`. Downgrade attacks using `alg:none` or `HS256` are rejected.
 - **Claim validation.** Issuer (`iss`) and audience (`aud`) claims are validated by default.
-- **OAuth state** is required on the callback, compared using `hash_equals()` (timing-safe), and cleared from the session after use.
+- **OAuth state** is required on the callback, compared using `hash_equals()` (timing-safe), and cleared from the session after use (single-use via `pull`, not `get`).
+- **Guard binding.** The target guard is chosen by your own server-side code when you call `Huwiya::redirect($guard)` and is stored atomically with the state in one session entry. The callback re-validates that the bound guard still uses the `huwiya-web` driver before authenticating — an attacker cannot influence the guard via query strings or cookies, and a guard removed or altered between the two requests causes the flow to fail instead of logging into an unintended guard.
 - **Strict base64url decoding** is applied to every JWT segment — malformed inputs are rejected early.
 - **Session cookies** are marked `HttpOnly` and `SameSite=Lax` when the stateful middleware is active.
 - **Session fixation** is prevented by regenerating the session ID after a successful login.
@@ -364,9 +374,6 @@ All settings are defined in `config/huwiya.php`.
 | `client_id`           | `HUWIYA_CLIENT_ID`          | *(required)*                                  | OAuth client ID.                                                                   |
 | `client_secret`       | `HUWIYA_CLIENT_SECRET`      | *(required)*                                  | OAuth client secret.                                                               |
 | `redirect_uri`        | `HUWIYA_REDIRECT_URI`       | `{APP_URL}/huwiya/callback`                   | OAuth redirect URI. Must be registered on the IdP.                                 |
-| `routes.enabled`      | `HUWIYA_ROUTES_ENABLED`     | `true`                                        | Toggle the package-provided `/redirect` and `/callback` routes.                    |
-| `routes.prefix`       | `HUWIYA_ROUTES_PREFIX`      | `huwiya`                                      | URL prefix for the bundled routes.                                                 |
-| `web_guard`           | `HUWIYA_WEB_GUARD`          | `web`                                         | Guard the OAuth callback logs the user into.                                       |
 | `stateful`            | `HUWIYA_STATEFUL_DOMAINS`   | localhost + `APP_URL` host + `FRONTEND_URL`   | Domains that receive session-based authentication via the stateful middleware.     |
 | `auth_method`         | `HUWIYA_AUTH_METHOD`        | `basic`                                       | Client authentication method at the token endpoint: `basic` or `body`.             |
 | `verify_signature`    | `HUWIYA_VERIFY_SIGNATURE`   | `true`                                        | Disable only for local development. **Always on in production.**                   |

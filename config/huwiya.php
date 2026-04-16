@@ -64,37 +64,6 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Routes
-    |--------------------------------------------------------------------------
-    |
-    | Control the package-provided OAuth2 redirect/callback routes.
-    | Set `enabled` to false to disable them entirely (e.g. if your app
-    | wires its own controllers at custom paths). `prefix` controls the
-    | URL segment both routes live under (defaults to "huwiya", producing
-    | "/huwiya/redirect" and "/huwiya/callback").
-    |
-    */
-
-    'routes' => [
-        'enabled' => env('HUWIYA_ROUTES_ENABLED', true),
-        'prefix' => env('HUWIYA_ROUTES_PREFIX', 'huwiya'),
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Web Guard
-    |--------------------------------------------------------------------------
-    |
-    | The name of the guard used for the OAuth2 web callback flow. This guard
-    | determines which provider (and therefore which model) is used when
-    | creating or finding users after the OAuth2 callback.
-    |
-    */
-
-    'web_guard' => env('HUWIYA_WEB_GUARD', 'web'),
-
-    /*
-    |--------------------------------------------------------------------------
     | Stateful Domains
     |--------------------------------------------------------------------------
     |

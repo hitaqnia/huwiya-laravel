@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\Facade;
 /**
  * @method static void whenAuthorizationDenied(callable $callback)
  * @method static mixed denied(?string $error = null, ?string $description = null)
+ * @method static \Illuminate\Http\RedirectResponse redirect(string $guard)
+ * @method static void assertGuardIsHuwiyaWeb(string $guard)
  * @method static ?TokenClaims decodeAndVerifyToken(string $token)
  * @method static string getPublicKey(string $kid)
  * @method static string|false base64UrlDecode(string $input)

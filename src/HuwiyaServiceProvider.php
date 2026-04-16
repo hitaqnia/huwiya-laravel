@@ -47,20 +47,12 @@ class HuwiyaServiceProvider extends ServiceProvider
 
     protected function defineRoutes(): void
     {
-        if (! config('huwiya.routes.enabled', true)) {
-            return;
-        }
-
         if ($this->app->routesAreCached()) {
             return;
         }
 
-        $prefix = trim((string) config('huwiya.routes.prefix', 'huwiya'), '/');
-        $prefix = $prefix === '' ? 'huwiya' : $prefix;
-
-        Route::middleware('web')->prefix($prefix)->group(function () {
-            Route::get('/redirect', Http\Controllers\RedirectController::class)->name('huwiya.redirect');
-            Route::get('/callback', Http\Controllers\CallbackController::class)->name('huwiya.callback');
+        Route::middleware('web')->group(function () {
+            Route::get('/huwiya/callback', Http\Controllers\CallbackController::class)->name('huwiya.callback');
         });
     }
 
