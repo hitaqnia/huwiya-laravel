@@ -93,7 +93,7 @@ class CallbackController
         $provider = config("auth.guards.{$guard}.provider");
         $model = config("auth.providers.{$provider}.model");
 
-        $user = $model::findOrCreateFromHuwiya($claims);
+        $user = $model::findOrCreateFromHuwiya($claims, $guard);
 
         Auth::guard($guard)->login($user);
 

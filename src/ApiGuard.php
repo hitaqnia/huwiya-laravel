@@ -9,6 +9,7 @@ class ApiGuard
 {
     public function __construct(
         protected ?string $provider = null,
+        protected ?string $guardName = null,
     ) {}
 
     /**
@@ -46,7 +47,7 @@ class ApiGuard
             );
         }
 
-        $user = $model::findOrCreateFromHuwiya($claims);
+        $user = $model::findOrCreateFromHuwiya($claims, $this->guardName);
 
         $user->huwiyaToken = $claims;
 

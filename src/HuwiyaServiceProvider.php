@@ -82,7 +82,7 @@ class HuwiyaServiceProvider extends ServiceProvider
 
             $auth->extend('huwiya-api', function ($app, $name, array $config) use ($auth) {
                 return tap(
-                    new RequestGuard(new ApiGuard($config['provider'] ?? null), request(), $auth->createUserProvider($config['provider'] ?? null)),
+                    new RequestGuard(new ApiGuard($config['provider'] ?? null, $name), request(), $auth->createUserProvider($config['provider'] ?? null)),
                     fn ($guard) => $app->refresh('request', $guard, 'setRequest'),
                 );
             });

@@ -25,9 +25,14 @@ The official Laravel SDK for the [Huwiya](https://huwiya.id) Identity Provider. 
   - [SPA / First-Party Frontend](#spa--first-party-frontend)
 - [Customization](#customization)
   - [User Mapping](#user-mapping)
+  - [User Lookup](#user-lookup)
+  - [User Creation](#user-creation)
+  - [User Update](#user-update)
+  - [Lifecycle Hooks](#lifecycle-hooks)
   - [Multiple Guards](#multiple-guards)
   - [Authorization Denial Handler](#authorization-denial-handler)
   - [Stateful Middleware](#stateful-middleware)
+- [Events](#events)
 - [Testing Support](#testing-support)
 - [Exceptions](#exceptions)
 - [Logging](#logging)
@@ -154,7 +159,7 @@ A single callback route is registered automatically at the fixed path `/huwiya/c
 ### Web Flow
 
 1. The user hits a route in your application that calls `Huwiya::redirect($guard)`. The package validates that the named guard uses the `huwiya-web` driver, generates a cryptographically random `state`, stores `['state' => ..., 'guard' => ...]` atomically under the session key `huwiya.oauth`, and redirects to the IdP.
-2. The IdP redirects back to `/huwiya/callback`. The package pulls (and clears) the bound session payload, verifies the `state` with a timing-safe comparison, re-validates the guard against the current auth configuration, exchanges the authorization code for a JWT at `{url}/oauth/token`, decodes the claims, and invokes `User::findOrCreateFromHuwiya($claims)`.
+2. The IdP redirects back to `/huwiya/callback`. The package pulls (and clears) the bound session payload, verifies the `state` with a timing-safe comparison, re-validates the guard against the current auth configuration, exchanges the authorization code for a JWT at `{url}/oauth/token`, decodes the claims, and invokes `User::findOrCreateFromHuwiya($claims, $guard)`. This triggers the full [lifecycle](#customization) — lookup, create-or-update, hooks, and [events](#events).
 3. The user is authenticated into the guard that was bound at redirect time. Subsequent requests are authenticated by that `huwiya-web` guard.
 
 After a successful login, the callback issues `redirect()->intended('/')`, so any `url.intended` value your middleware sets will be honoured.
@@ -166,7 +171,7 @@ For each request, the `huwiya-api` guard performs the following steps:
 1. Reads the `Authorization: Bearer <jwt>` header.
 2. Verifies the signature against the IdP's JWKS, cached for one hour under a key derived from the JWKS URI. The cache is invalidated automatically when an unknown `kid` is encountered, supporting seamless key rotation.
 3. Validates the `alg`, `exp` (with leeway), `iss`, and `aud` claims.
-4. Invokes `User::findOrCreateFromHuwiya($claims)`.
+4. Invokes `User::findOrCreateFromHuwiya($claims, $guard)`, triggering the same [lifecycle](#customization) and [events](#events) as the web flow.
 5. Attaches the decoded `TokenClaims` instance to `$user->huwiyaToken`.
 
 The flow is fully stateless — no session is created or read.
@@ -187,9 +192,22 @@ Configure `HUWIYA_STATEFUL_DOMAINS` with a comma-separated list of trusted front
 
 ## Customization
 
-### User Mapping
+The `InteractsWithHuwiya` trait provides sensible defaults that work out of the box. Every step of the authentication lifecycle is exposed as an individual method you can override on your model — no subclassing controllers or guards required. Customization is per-model, so `User` and `Admin` can each have their own rules.
 
-The `InteractsWithHuwiya` trait provides sensible defaults for mapping Huwiya claims onto your model. Each method is overridable.
+The lifecycle runs in this order:
+
+```
+resolveHuwiyaUser()
+    └─ newHuwiyaQuery() → huwiyaQueryForClaims()
+         │
+         ├─ User found → beforeHuwiyaUpdate() → updateHuwiyaUser() → afterHuwiyaUpdate()
+         │
+         └─ Not found  → shouldAutoRegister()
+                           ├─ false → HuwiyaUserNotFoundException
+                           └─ true  → beforeHuwiyaCreate() → createHuwiyaUser() → afterHuwiyaCreate()
+```
+
+### User Mapping
 
 **Identifier column.** Override the column name on both the model and the migration:
 
@@ -204,7 +222,7 @@ public function getHuwiyaIdentifierColumn(): string
 $table->huwiyaIdentifier('sso_id');
 ```
 
-**Attribute mapping.** By default, the trait only persists `name`. Because identity — including `phone` and `email` — is owned by the IdP, the recommended approach is to keep the local projection minimal (ideally just `huwiya_id`) and fetch anything else from Huwiya on demand. If you do want to cache claim fields locally, override the two methods below. Any column you return here must already exist on your users table:
+**Attribute mapping.** By default, the trait only persists `name`. Because identity — including `phone` and `email` — is owned by the IdP, the recommended approach is to keep the local projection minimal (ideally just `huwiya_id`) and fetch anything else from Huwiya on demand. If you do want to cache claim fields locally, override the two attribute methods. Any column you return here must already exist on your users table:
 
 ```php
 use Huwiya\TokenClaims;
@@ -216,7 +234,6 @@ public function getHuwiyaCreateAttributes(TokenClaims $claims): array
         'locale'   => $claims->locale,
         'timezone' => $claims->zoneinfo,
         'theme'    => $claims->theme,
-        'role'     => 'member',
     ];
 }
 
@@ -233,9 +250,20 @@ Return an empty array from `getHuwiyaUpdateAttributes()` to skip updates on re-l
 **Disable auto-registration.** By default, users that do not exist locally are created on first login. To reject unknown users:
 
 ```php
-public function shouldAutoRegister(): bool
+public function shouldAutoRegister(?TokenClaims $claims = null): bool
 {
     return false;
+}
+```
+
+The `$claims` argument gives you access to the incoming token, so you can conditionally allow registration (e.g. based on scopes or an invitation check):
+
+```php
+public function shouldAutoRegister(?TokenClaims $claims = null): bool
+{
+    return Invitation::where('huwiya_id', $claims?->id)
+        ->whereNull('accepted_at')
+        ->exists();
 }
 ```
 
@@ -244,10 +272,116 @@ When disabled, unknown users cause the callback to throw `Huwiya\Exceptions\Huwi
 **Helpers.** The trait exposes the following methods:
 
 ```php
-User::findByHuwiyaId('01HR...');          // ?User
-User::findOrCreateFromHuwiya($claims);    // Called internally by the SDK
-$user->huwiyaToken;                       // TokenClaims (API requests only)
+User::findByHuwiyaId('01HR...');                  // ?User
+User::resolveHuwiyaUser($claims);                 // ?User — customizable lookup
+User::findOrCreateFromHuwiya($claims, $guard);    // Called internally by the SDK
+$user->huwiyaToken;                               // TokenClaims (API requests only)
 ```
+
+### User Lookup
+
+By default, users are matched by the `huwiya_id` column. Override `huwiyaQueryForClaims()` to customize how users are resolved — for example, matching by `huwiya_id` with a fallback to `email`:
+
+```php
+use Huwiya\TokenClaims;
+use Illuminate\Database\Eloquent\Builder;
+
+public function huwiyaQueryForClaims(Builder $query, TokenClaims $claims): Builder
+{
+    return $query->where(function (Builder $q) use ($claims) {
+        $q->where('huwiya_id', $claims->id)
+          ->orWhere('email', $claims->name);
+    });
+}
+```
+
+Override `newHuwiyaQuery()` to customize the base query — apply tenant scopes, include soft-deleted records, or eager-load relationships:
+
+```php
+public static function newHuwiyaQuery(): Builder
+{
+    return static::query()->withTrashed();
+}
+```
+
+### User Creation
+
+Override `createHuwiyaUser()` when you need creation logic beyond simple attribute mapping — assigning roles, attaching to a tenant, wrapping in a transaction:
+
+```php
+use Huwiya\TokenClaims;
+use Illuminate\Support\Facades\DB;
+
+public static function createHuwiyaUser(TokenClaims $claims): static
+{
+    return DB::transaction(function () use ($claims) {
+        $instance = new static;
+
+        $user = static::create(array_merge(
+            [$instance->getHuwiyaIdentifierColumn() => $claims->id],
+            $instance->getHuwiyaCreateAttributes($claims),
+        ));
+
+        $user->assignRole(
+            in_array('admin', $claims->scopes, true) ? 'admin' : 'member'
+        );
+
+        return $user;
+    });
+}
+```
+
+The default `createHuwiyaUser()` delegates to `getHuwiyaCreateAttributes()` — override that if you only need to control the attribute map, or override `createHuwiyaUser()` itself for full control over the creation process.
+
+### User Update
+
+Override `updateHuwiyaUser()` when you need update logic beyond simple attribute mapping — syncing roles from scopes, conditionally skipping updates, or tracking last login:
+
+```php
+use Huwiya\TokenClaims;
+
+public function updateHuwiyaUser(TokenClaims $claims): void
+{
+    $this->update(array_merge(
+        $this->getHuwiyaUpdateAttributes($claims),
+        ['last_login_at' => now()],
+    ));
+
+    $this->syncRolesFromScopes($claims->scopes);
+}
+```
+
+The default `updateHuwiyaUser()` delegates to `getHuwiyaUpdateAttributes()` and skips the write when it returns an empty array.
+
+### Lifecycle Hooks
+
+The trait provides `before` and `after` hooks for both creation and update. These are simple no-op methods you can override for side effects without replacing the core create/update logic:
+
+```php
+use Huwiya\TokenClaims;
+
+public function beforeHuwiyaCreate(TokenClaims $claims): void
+{
+    Log::info('Provisioning new user', ['huwiya_id' => $claims->id]);
+}
+
+public function afterHuwiyaCreate(TokenClaims $claims): void
+{
+    $this->notify(new WelcomeNotification);
+}
+
+public function beforeHuwiyaUpdate(TokenClaims $claims): void
+{
+    // Called before an existing user is updated on re-login.
+}
+
+public function afterHuwiyaUpdate(TokenClaims $claims): void
+{
+    // Called after an existing user has been updated on re-login.
+}
+```
+
+For app-level side effects that should be decoupled from the model (sending queued emails, dispatching jobs, notifying external services), prefer [Events](#events) over hooks.
 
 ### Multiple Guards
 
@@ -300,6 +434,79 @@ You may swap the cookie and CSRF middleware used by `EnsureFrontendRequestsAreSt
     'encrypt_cookies'     => \App\Http\Middleware\EncryptCookies::class,
     'validate_csrf_token' => \App\Http\Middleware\ValidateCsrfToken::class,
 ],
+```
+
+## Events
+
+The SDK dispatches lifecycle events during user resolution, creation, and update. Events are fired from inside the `InteractsWithHuwiya` trait, so both the web (OAuth callback) and API (JWT bearer) flows fire them automatically.
+
+Every event carries the `TokenClaims`, the `Authenticatable` user (when available), and the guard name (e.g. `'web'`, `'admin'`, `'api'`).
+
+| Event | Payload | Fired when |
+| ----- | ------- | ---------- |
+| `HuwiyaAuthenticating` | `$claims`, `$guard` | Before any database work. |
+| `HuwiyaUserResolving` | `$claims`, `$query`, `$guard` | Before the lookup query executes. Listeners may further constrain `$query`. |
+| `HuwiyaUserCreating` | `$claims`, `$guard` | Before a new user is created (after `beforeHuwiyaCreate()`). |
+| `HuwiyaUserCreated` | `$claims`, `$user`, `$guard` | After a new user has been created (after `afterHuwiyaCreate()`). |
+| `HuwiyaUserUpdating` | `$claims`, `$user`, `$guard` | Before an existing user is updated (after `beforeHuwiyaUpdate()`). |
+| `HuwiyaUserUpdated` | `$claims`, `$user`, `$guard` | After an existing user has been updated (after `afterHuwiyaUpdate()`). |
+| `HuwiyaAuthenticated` | `$claims`, `$user`, `$guard` | After the user has been resolved (created or updated). Fires on every authentication. |
+
+All event classes live under the `Huwiya\Events` namespace.
+
+**Example: send a welcome email on first login.**
+
+```php
+// app/Providers/AppServiceProvider.php (or EventServiceProvider)
+use Huwiya\Events\HuwiyaUserCreated;
+use App\Listeners\SendWelcomeEmail;
+
+protected $listen = [
+    HuwiyaUserCreated::class => [
+        SendWelcomeEmail::class,
+    ],
+];
+```
+
+```php
+// app/Listeners/SendWelcomeEmail.php
+use Huwiya\Events\HuwiyaUserCreated;
+
+class SendWelcomeEmail
+{
+    public function handle(HuwiyaUserCreated $event): void
+    {
+        Mail::to($event->user)->queue(new WelcomeMail($event->user));
+    }
+}
+```
+
+**Example: track last login timestamp on every sign-in.**
+
+```php
+use Huwiya\Events\HuwiyaAuthenticated;
+
+class RecordLastLogin
+{
+    public function handle(HuwiyaAuthenticated $event): void
+    {
+        $event->user->update(['last_login_at' => now()]);
+    }
+}
+```
+
+**Example: add extra query constraints via a listener.**
+
+```php
+use Huwiya\Events\HuwiyaUserResolving;
+
+class ScopeLookupToTenant
+{
+    public function handle(HuwiyaUserResolving $event): void
+    {
+        $event->query->where('tenant_id', session('tenant_id'));
+    }
+}
 ```
 
 ## Testing Support
