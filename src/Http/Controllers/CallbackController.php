@@ -2,6 +2,7 @@
 
 namespace Huwiya\Http\Controllers;
 
+use Huwiya\Exceptions\HuwiyaConflictException;
 use Huwiya\Exceptions\HuwiyaUserNotFoundException;
 use Huwiya\Exceptions\InvalidStateException;
 use Huwiya\Exceptions\TokenExchangeException;
@@ -27,6 +28,11 @@ class CallbackController
         } catch (HuwiyaUserNotFoundException $e) {
             Huwiya::log()?->info('Huwiya: user not found and auto-registration disabled.');
             abort(403, 'Access denied.');
+        } catch (HuwiyaConflictException $e) {
+            Huwiya::log()?->warning('Huwiya: conflict resolving user.', [
+                'column' => $e->conflictingColumn,
+            ]);
+            abort(409, 'Account conflict. Please contact support.');
         }
     }
 

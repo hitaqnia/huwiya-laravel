@@ -9,8 +9,10 @@ use Huwiya\Events\HuwiyaUserCreating;
 use Huwiya\Events\HuwiyaUserResolving;
 use Huwiya\Events\HuwiyaUserUpdated;
 use Huwiya\Events\HuwiyaUserUpdating;
+use Huwiya\Exceptions\HuwiyaConflictException;
 use Huwiya\Exceptions\HuwiyaUserNotFoundException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\UniqueConstraintViolationException;
 
 trait InteractsWithHuwiya
 {
@@ -29,9 +31,9 @@ trait InteractsWithHuwiya
             return;
         }
 
-        // If the model uses the default guarded=[] / fillable=[] posture, it
-        // already accepts every attribute — adding to $fillable would flip it
-        // into whitelist mode and start rejecting other columns.
+        // If the model uses guarded=[] / fillable=[], it already accepts
+        // every attribute — adding to $fillable would flip it into whitelist
+        // mode and start rejecting other columns.
         if ($this->getFillable() === []) {
             return;
         }
@@ -45,12 +47,13 @@ trait InteractsWithHuwiya
         $this->mergeFillable([$column]);
     }
 
-    // -------------------------------------------------------------------------
-    //  Identifier & Gate
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    //  POLICY HOOKS — override these on your model to customize behavior.
+    //  Each method is single-purpose and safe to override.
+    // =========================================================================
 
     /**
-     * Get the column name that stores the Huwiya subject identifier.
+     * The column that stores the Huwiya subject identifier (ULID).
      */
     public function getHuwiyaIdentifierColumn(): string
     {
@@ -58,22 +61,16 @@ trait InteractsWithHuwiya
     }
 
     /**
-     * Determine if new users should be auto-registered on first login.
+     * Accept unknown users? Return false for invite-only installs.
      */
     public function shouldAutoRegister(?TokenClaims $claims = null): bool
     {
         return true;
     }
 
-    // -------------------------------------------------------------------------
-    //  Lookup
-    // -------------------------------------------------------------------------
-
     /**
-     * Create a new base query for Huwiya user resolution.
-     *
-     * Override to apply tenant scopes, include soft-deleted records,
-     * or eager-load relationships.
+     * Base Eloquent query for user resolution. Override to apply tenant
+     * scopes, include soft-deleted rows, or eager-load relationships.
      */
     public static function newHuwiyaQuery(): Builder
     {
@@ -81,11 +78,8 @@ trait InteractsWithHuwiya
     }
 
     /**
-     * Constrain the query to match a user from the given claims.
-     *
-     * Override to match by multiple columns — for example, to add a
-     * phone-fallback for invitation claiming, or to look up by email
-     * when the subject ID is not yet known.
+     * Constrain the query to match a user from the given claims. Override to
+     * add fallback lookup columns (phone, email) or multi-tenant filters.
      */
     public function huwiyaQueryForClaims(Builder $query, TokenClaims $claims): Builder
     {
@@ -93,100 +87,78 @@ trait InteractsWithHuwiya
     }
 
     /**
-     * Resolve an existing user from the given claims.
-     */
-    public static function resolveHuwiyaUser(TokenClaims $claims, ?string $guard = null): ?static
-    {
-        $instance = new static;
-        $query = $instance->huwiyaQueryForClaims(static::newHuwiyaQuery(), $claims);
-
-        event(new HuwiyaUserResolving($claims, $query, $guard));
-
-        return $query->first();
-    }
-
-    // -------------------------------------------------------------------------
-    //  Creation
-    // -------------------------------------------------------------------------
-
-    /**
-     * Get the attributes to fill when creating a new user from Huwiya claims.
-     *
-     * Override to sync additional claim fields to your users table.
+     * Attributes to persist when creating a new user from claims.
+     * Default is an empty array — apps opt in to which columns they sync.
      *
      * @return array<string, mixed>
      */
     public function getHuwiyaCreateAttributes(TokenClaims $claims): array
     {
-        return [
-            'name' => $claims->name,
-        ];
+        return [];
     }
 
     /**
-     * Create a new user from the given Huwiya claims.
-     *
-     * Override to assign roles, attach to a tenant, wrap in a transaction,
-     * or perform any custom provisioning logic.
-     */
-    public static function createHuwiyaUser(TokenClaims $claims): static
-    {
-        $instance = new static;
-
-        return static::create(array_merge(
-            [$instance->getHuwiyaIdentifierColumn() => $claims->id],
-            $instance->getHuwiyaCreateAttributes($claims),
-        ));
-    }
-
-    // -------------------------------------------------------------------------
-    //  Update
-    // -------------------------------------------------------------------------
-
-    /**
-     * Get the attributes to update on an existing user from Huwiya claims.
-     *
-     * Override to sync additional claim fields, or to include the identifier
-     * column when claiming an invitation row (see README "Invitations").
+     * Attributes to persist when updating an existing user from claims.
+     * Default is an empty array — return [] to skip updates on re-login.
      *
      * @return array<string, mixed>
      */
     public function getHuwiyaUpdateAttributes(TokenClaims $claims): array
     {
-        return [
-            'name' => $claims->name,
-        ];
+        return [];
     }
 
     /**
-     * Update the existing user with data from the given Huwiya claims.
+     * Unique columns that may collide when persisting claim data. The SDK
+     * consults this list when a unique-constraint violation fires to figure
+     * out which column caused the conflict, so `resolveHuwiyaConflict` can
+     * receive the right column name.
      *
-     * Override to sync roles from scopes, conditionally skip updates,
-     * or perform any custom update logic.
+     * @return array<int, string>
      */
-    public function updateHuwiyaUser(TokenClaims $claims): void
+    public function getHuwiyaConflictColumns(): array
     {
-        $attributes = $this->getHuwiyaUpdateAttributes($claims);
-
-        if ($attributes !== []) {
-            $this->update($attributes);
-        }
+        return ['phone', 'email'];
     }
 
-    // -------------------------------------------------------------------------
-    //  Orchestration
-    // -------------------------------------------------------------------------
+    /**
+     * Decide what to do when writing a claim hits a unique-constraint
+     * violation on a recyclable column (typically phone or email). This is
+     * the single seam for "phone recycling" policy — the SDK has already
+     * detected the conflict, found the colliding row, and will retry the
+     * write once after this method returns.
+     *
+     * Default: throw HuwiyaConflictException. Override to implement your
+     * policy (delete the stale row, transfer ownership, throw a custom
+     * exception with a support flow, etc).
+     *
+     * @throws HuwiyaConflictException
+     */
+    public function resolveHuwiyaConflict(
+        TokenClaims $claims,
+        self $existingRow,
+        string $conflictingColumn,
+    ): void {
+        throw HuwiyaConflictException::make($claims, $existingRow, $conflictingColumn);
+    }
+
+    // =========================================================================
+    //  PUBLIC ENTRYPOINTS — called by the guards. Do not override.
+    // =========================================================================
 
     /**
-     * Find or create a user from Huwiya token claims.
+     * Find or create a user from Huwiya token claims. This is the entrypoint
+     * invoked by the `huwiya-web` and `huwiya-api` guards after successful
+     * JWT verification.
      *
      * @throws HuwiyaUserNotFoundException
+     * @throws HuwiyaConflictException
      */
     public static function findOrCreateFromHuwiya(TokenClaims $claims, ?string $guard = null): static
     {
         event(new HuwiyaAuthenticating($claims, $guard));
 
-        $user = static::resolveHuwiyaUser($claims, $guard);
+        $user = static::performHuwiyaResolution($claims, $guard);
 
         if ($user === null) {
             $instance = new static;
@@ -199,13 +171,13 @@ trait InteractsWithHuwiya
 
             event(new HuwiyaUserCreating($claims, $guard));
 
-            $user = static::createHuwiyaUser($claims);
+            $user = static::performHuwiyaCreation($claims);
 
             event(new HuwiyaUserCreated($claims, $user, $guard));
         } else {
             event(new HuwiyaUserUpdating($claims, $user, $guard));
 
-            $user->updateHuwiyaUser($claims);
+            $user->performHuwiyaUpdate($claims);
 
             event(new HuwiyaUserUpdated($claims, $user, $guard));
         }
@@ -225,5 +197,167 @@ trait InteractsWithHuwiya
         return static::newHuwiyaQuery()
             ->where($instance->getHuwiyaIdentifierColumn(), $id)
             ->first();
+    }
+
+    // =========================================================================
+    //  ORCHESTRATION — internal. DO NOT override on your model.
+    //  These methods wire events and handle conflict retries. Overriding
+    //  them breaks event dispatch and conflict-resolution invariants.
+    // =========================================================================
+
+    /**
+     * @internal
+     */
+    public static function performHuwiyaResolution(TokenClaims $claims, ?string $guard = null): ?static
+    {
+        $instance = new static;
+        $query = $instance->huwiyaQueryForClaims(static::newHuwiyaQuery(), $claims);
+
+        event(new HuwiyaUserResolving($claims, $query, $guard));
+
+        return $query->first();
+    }
+
+    /**
+     * @internal
+     *
+     * @throws HuwiyaConflictException
+     */
+    public static function performHuwiyaCreation(TokenClaims $claims): static
+    {
+        $instance = new static;
+
+        $attempt = fn () => static::create(array_merge(
+            [$instance->getHuwiyaIdentifierColumn() => $claims->id],
+            $instance->getHuwiyaCreateAttributes($claims),
+        ));
+
+        try {
+            return $attempt();
+        } catch (UniqueConstraintViolationException $e) {
+            static::dispatchHuwiyaConflict($claims, $e);
+        }
+
+        // Retry exactly once after the app's policy runs. A second collision
+        // means the policy didn't clear the conflict — surface it.
+        try {
+            return $attempt();
+        } catch (UniqueConstraintViolationException $e) {
+            throw HuwiyaConflictException::unresolved($claims, $e);
+        }
+    }
+
+    /**
+     * @internal
+     *
+     * @throws HuwiyaConflictException
+     */
+    public function performHuwiyaUpdate(TokenClaims $claims): void
+    {
+        $attributes = $this->getHuwiyaUpdateAttributes($claims);
+
+        if ($attributes === []) {
+            return;
+        }
+
+        try {
+            $this->update($attributes);
+
+            return;
+        } catch (UniqueConstraintViolationException $e) {
+            static::dispatchHuwiyaConflict($claims, $e);
+        }
+
+        try {
+            $this->update($attributes);
+        } catch (UniqueConstraintViolationException $e) {
+            throw HuwiyaConflictException::unresolved($claims, $e);
+        }
+    }
+
+    /**
+     * @internal
+     *
+     * Detect the conflicting column from the driver exception, locate the
+     * existing row, and hand off to the app's resolveHuwiyaConflict policy.
+     */
+    protected static function dispatchHuwiyaConflict(
+        TokenClaims $claims,
+        UniqueConstraintViolationException $exception,
+    ): void {
+        $instance = new static;
+        $column = static::detectConflictColumn($exception, $instance->getHuwiyaConflictColumns());
+
+        if ($column === null || ! property_exists($claims, $column)) {
+            throw HuwiyaConflictException::unresolved($claims, $exception);
+        }
+
+        $value = $claims->{$column};
+
+        if ($value === null || $value === '') {
+            throw HuwiyaConflictException::unresolved($claims, $exception);
+        }
+
+        $existing = static::newHuwiyaQuery()->where($column, $value)->first();
+
+        if ($existing === null) {
+            throw HuwiyaConflictException::unresolved($claims, $exception);
+        }
+
+        $instance->resolveHuwiyaConflict($claims, $existing, $column);
+    }
+
+    /**
+     * @internal
+     *
+     * @param  array<int, string>  $candidates
+     */
+    protected static function detectConflictColumn(
+        UniqueConstraintViolationException $exception,
+        array $candidates,
+    ): ?string {
+        // Each major driver names the constraint/column in a predictable way,
+        // but surrounded by enough other text (SQL, values, etc.) that a naive
+        // scan hits false positives. We extract the first identifier that
+        // follows one of the well-known markers and match it against the
+        // candidate list.
+        $message = $exception->getMessage();
+
+        // SQLite: "UNIQUE constraint failed: users.email" — take the token
+        // after the last dot on the same line, before whitespace.
+        if (preg_match('/constraint\s+failed:\s*(?:\w+\.)*(\w+)/i', $message, $m)) {
+            $token = strtolower($m[1]);
+
+            foreach ($candidates as $column) {
+                if ($token === strtolower($column)) {
+                    return $column;
+                }
+            }
+        }
+
+        // MySQL: "for key 'users.email_unique'" — the constraint name often
+        // embeds the column. Scan candidates against the quoted key name.
+        if (preg_match("/for\s+key\s+['\"`]([^'\"`]+)['\"`]/i", $message, $m)) {
+            $key = strtolower($m[1]);
+
+            foreach ($candidates as $column) {
+                if (str_contains($key, strtolower($column))) {
+                    return $column;
+                }
+            }
+        }
+
+        // Postgres: `duplicate key value violates unique constraint "users_email_key"`
+        if (preg_match('/unique\s+constraint\s+["\']([^"\']+)["\']/i', $message, $m)) {
+            $key = strtolower($m[1]);
+
+            foreach ($candidates as $column) {
+                if (str_contains($key, strtolower($column))) {
+                    return $column;
+                }
+            }
+        }
+
+        return null;
     }
 }

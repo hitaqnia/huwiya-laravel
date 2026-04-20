@@ -73,15 +73,13 @@ it('uses the configured identifier column', function () {
     expect($user->getHuwiyaIdentifierColumn())->toBe('huwiya_id');
 });
 
-it('trait defaults expose a minimal name-only sync that apps extend', function () {
-    // A model that only uses the trait (no overrides) should see the
-    // minimal default — name only. The test User fixture widens this.
+it('trait defaults sync no attributes until the app opts in', function () {
     $minimal = new class extends \Illuminate\Database\Eloquent\Model {
         use \Huwiya\InteractsWithHuwiya;
     };
 
     $claims = makeTestClaims(['name' => 'Test User']);
 
-    expect($minimal->getHuwiyaCreateAttributes($claims))->toBe(['name' => 'Test User']);
-    expect($minimal->getHuwiyaUpdateAttributes($claims))->toBe(['name' => 'Test User']);
+    expect($minimal->getHuwiyaCreateAttributes($claims))->toBe([]);
+    expect($minimal->getHuwiyaUpdateAttributes($claims))->toBe([]);
 });
