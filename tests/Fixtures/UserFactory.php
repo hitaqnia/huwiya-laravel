@@ -16,9 +16,6 @@ class UserFactory extends Factory
             'name' => fake()->name(),
             'phone' => '+964'.fake()->unique()->numerify('#########'),
             'email' => fake()->unique()->safeEmail(),
-            'locale' => 'en',
-            'zoneinfo' => 'Asia/Baghdad',
-            'theme' => 'light',
         ];
     }
 }

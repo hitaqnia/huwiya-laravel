@@ -19,15 +19,15 @@ The official Laravel SDK for the [Huwiya](https://huwiya.id) Identity Provider. 
 - [Initiating a login](#initiating-a-login)
 - [How it works](#how-it-works)
 - [Customization](#customization)
-  - [Field mapping](#field-mapping)
+  - [Attribute mapping](#attribute-mapping)
   - [User lookup](#user-lookup)
   - [User creation](#user-creation)
   - [User update](#user-update)
-  - [Lifecycle hooks](#lifecycle-hooks)
+  - [Disabling auto-registration](#disabling-auto-registration)
   - [Multiple guards](#multiple-guards)
   - [Authorization denial](#authorization-denial)
   - [Stateful middleware for SPAs](#stateful-middleware-for-spas)
-- [Invitations](#invitations)
+- [Recipe: invitations](#recipe-invitations)
 - [Events](#events)
 - [Testing](#testing)
 - [Errors](#errors)
@@ -52,7 +52,7 @@ Install via Composer:
 composer require hitaqnia/huwiya-laravel
 ```
 
-The service provider is registered automatically through Laravel's package discovery. Publish the configuration file if you need to customize anything beyond the environment variables:
+The service provider is registered automatically through Laravel's package discovery. Publish the configuration file if you need to customize settings beyond the environment variables:
 
 ```bash
 php artisan vendor:publish --tag=huwiya-config
@@ -92,16 +92,9 @@ The trait is mandatory for every model bound to a Huwiya guard. Both guards thro
 
 ### 2. Write your migration
 
-The SDK does not ship a migration. It provides two Blueprint macros you compose into your own `users` table migration.
-
-**`huwiyaIdentifier()`** — creates the Huwiya subject column (nullable, unique, ULID). The column is nullable so invitation rows can exist before they are claimed.
-
-**`huwiyaFields()`** — a one-call bundler that creates every column declared in your model's `$huwiyaFieldsMap`. The map is the single source of truth: the schema and the runtime both read it, so renaming or disabling a field is a one-line change.
-
-Recommended migration:
+The SDK does not own your `users` schema — it ships a single Blueprint macro, `huwiyaIdentifier()`, which creates the Huwiya subject column with the correct type and constraints. Compose it into your own migration alongside any other columns your application needs:
 
 ```php
-use App\Models\User;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -112,7 +105,10 @@ return new class extends Migration
     {
         Schema::create('users', function (Blueprint $table) {
             $table->id();
-            $table->huwiyaFields(User::huwiyaFieldsSchema());
+            $table->huwiyaIdentifier();          // nullable unique ULID
+            $table->string('phone')->unique();
+            $table->string('email')->unique()->nullable();
+            $table->string('name')->nullable();
             $table->rememberToken();
             $table->timestamps();
         });
@@ -125,30 +121,9 @@ return new class extends Migration
 };
 ```
 
-With the default field map, this creates:
+`huwiyaIdentifier()` defaults to a column named `huwiya_id`. Pass a string to rename it — `$table->huwiyaIdentifier('sso_id')` — as long as the name matches `getHuwiyaIdentifierColumn()` on your model.
 
-| Column      | Type            | Constraints           |
-| ----------- | --------------- | --------------------- |
-| `huwiya_id` | `ulid`          | nullable, unique      |
-| `phone`     | `string`        | unique                |
-| `email`     | `string`        | nullable, unique      |
-| `name`      | `string`        | nullable              |
-| `locale`    | `string(10)`    | nullable              |
-| `zoneinfo`  | `string(64)`    | nullable              |
-| `theme`     | `string(16)`    | nullable              |
-
-If you only want the identifier column (for example when you don't need any claim data cached locally), call the lower-level macro directly:
-
-```php
-Schema::create('users', function (Blueprint $table) {
-    $table->id();
-    $table->huwiyaIdentifier();           // nullable, unique ulid
-    $table->string('phone')->unique();    // your own columns
-    $table->timestamps();
-});
-```
-
-To disable a default field, rename a column, or declare columns your IdP tenant adds, customize `$huwiyaFieldsMap` on your model — see [Field mapping](#field-mapping).
+The column is nullable to support the [invitation recipe](#recipe-invitations) where rows can exist locally before they are linked to a Huwiya subject. If you do not use invitations, leave it nullable anyway — the unique constraint prevents duplicates, and NULLs cost nothing.
 
 ## Registering guards
 
@@ -169,7 +144,7 @@ Switch the `web` and/or `api` guards in `config/auth.php` to the drivers provide
 
 ## Initiating a login
 
-The SDK does not ship a login route. Start the OAuth flow from a route you own by calling `Huwiya::redirect($guard)` and passing the guard the user should end up logged into:
+The SDK does not ship a login route. Start the OAuth flow from a route you own by calling `Huwiya::redirect($guard)`, passing the guard the user should end up logged into:
 
 ```php
 use Huwiya\Facades\Huwiya;
@@ -209,99 +184,69 @@ The flow is stateless — no session is created or read.
 
 ## Customization
 
-The `InteractsWithHuwiya` trait ships sensible defaults. Every step of the authentication lifecycle is exposed as an individual method you can override on your model — no subclassing of controllers or guards is required. Customization is per-model, so `User` and `Admin` can each have their own rules.
+The `InteractsWithHuwiya` trait ships sensible defaults. Every step of the authentication lifecycle is exposed as a single overridable method on your model — no subclassing of controllers or guards is required. Customization is per-model, so `User` and `Admin` can each have their own rules.
 
 Lifecycle order:
 
 ```
-resolveHuwiyaUser()
-    └─ newHuwiyaQuery() → huwiyaQueryForClaims()
-         │
-         ├─ User found      → beforeHuwiyaUpdate() → updateHuwiyaUser() → afterHuwiyaUpdate()
-         │   (invitation?   → HuwiyaInvitationClaiming / HuwiyaInvitationClaimed events)
-         │
-         └─ Not found       → shouldAutoRegister()
-                              ├─ false → HuwiyaUserNotFoundException
-                              └─ true  → beforeHuwiyaCreate() → createHuwiyaUser() → afterHuwiyaCreate()
+findOrCreateFromHuwiya()
+  └─ resolveHuwiyaUser()
+       └─ newHuwiyaQuery() → huwiyaQueryForClaims()
+            │
+            ├─ User found     → updateHuwiyaUser()
+            │                     (uses getHuwiyaUpdateAttributes())
+            │
+            └─ Not found      → shouldAutoRegister()
+                                 ├─ false → HuwiyaUserNotFoundException
+                                 └─ true  → createHuwiyaUser()
+                                              (uses getHuwiyaCreateAttributes())
 ```
 
-### Field mapping
+For decoupled side effects — welcome emails, audit logs, analytics — subscribe to [events](#events) rather than overriding the model.
 
-`$huwiyaFieldsMap` on your model is a single `claim key => column name` array consumed by both the `huwiyaFields()` migration macro and the runtime sync logic. Keeping a single source of truth makes renames safe.
+### Attribute mapping
 
-The trait default covers every claim Huwiya issues:
-
-```php
-protected array $huwiyaFieldsMap = [
-    'phone'    => 'phone',
-    'email'    => 'email',
-    'name'     => 'name',
-    'locale'   => 'locale',
-    'zoneinfo' => 'zoneinfo',
-    'theme'    => 'theme',
-];
-// huwiya_id is always included.
-```
-
-Override on your model to disable fields (omit the key or set it to `false`) or rename columns (change the value). The three shapes you'll actually write:
+Override `getHuwiyaCreateAttributes()` and `getHuwiyaUpdateAttributes()` to control which claim fields are persisted to your users table, and under which column names. The default is minimal — just `name` — because the SDK cannot know which columns your schema has.
 
 ```php
-// Identity only — id + phone, nothing else cached locally.
-protected array $huwiyaFieldsMap = [
-    'phone' => 'phone',
-];
-```
+use Huwiya\TokenClaims;
 
-```php
-// Rename a column — for example, phone_number instead of phone.
-protected array $huwiyaFieldsMap = [
-    'phone' => 'phone_number',
-    'email' => 'email',
-    'name'  => 'full_name',
-];
-```
-
-```php
-// Skip preference claims entirely.
-protected array $huwiyaFieldsMap = [
-    'phone' => 'phone',
-    'email' => 'email',
-    'name'  => 'name',
-    // locale, zoneinfo, theme omitted → not stored, not written
-];
-```
-
-**Identifier column name.** Override both the model and the macro call:
-
-```php
-// Model
-public function getHuwiyaIdentifierColumn(): string
-{
-    return 'sso_id';
-}
-
-// Migration
-$table->huwiyaIdentifier('sso_id');
-// or, because huwiyaFields() reads getHuwiyaIdentifierColumn():
-$table->huwiyaFields(User::huwiyaFieldsSchema());
-```
-
-**Advanced mapping.** If you need claim-to-column transformations beyond rename (e.g. lowercasing email, deriving a column from multiple claims), override `getHuwiyaCreateAttributes()` and `getHuwiyaUpdateAttributes()` directly:
-
-```php
-public function getHuwiyaCreateAttributes(\Huwiya\TokenClaims $claims): array
+public function getHuwiyaCreateAttributes(TokenClaims $claims): array
 {
     return [
-        'email'       => strtolower($claims->email),
-        'name'        => $claims->name,
-        'timezone'    => $claims->zoneinfo ?: config('app.timezone'),
+        'phone' => $claims->phone,
+        'email' => $claims->email,
+        'name'  => $claims->name,
+    ];
+}
+
+public function getHuwiyaUpdateAttributes(TokenClaims $claims): array
+{
+    return [
+        'name' => $claims->name,
+        // Skip phone/email on re-login if you don't want them to churn.
     ];
 }
 ```
 
+Rename columns, derive values, or apply per-claim transformations freely — this is plain PHP. To skip updates entirely on re-login, return an empty array from `getHuwiyaUpdateAttributes()`.
+
+Claims available on `$claims`:
+
+| Property   | Required | Notes                                       |
+| ---------- | -------- | ------------------------------------------- |
+| `id`       | yes      | ULID — use with `getHuwiyaIdentifierColumn()`. |
+| `name`     | yes      |                                             |
+| `phone`    | yes      |                                             |
+| `email`    | yes      |                                             |
+| `locale`   | no       | Empty string if the IdP omitted it.         |
+| `zoneinfo` | no       | Empty string if the IdP omitted it.         |
+| `theme`    | no       | Empty string if the IdP omitted it.         |
+| `scopes`   | yes      | `array<int, string>`                        |
+
 ### User lookup
 
-By default, users are matched by `huwiya_id`. Override `huwiyaQueryForClaims()` to customize — for example, to also fall back to email:
+By default, users are matched by `huwiya_id`. Override `huwiyaQueryForClaims()` to customize the lookup — for example, to fall back to phone-based lookup for invitation claiming, or to match by email when the subject ID is not yet known:
 
 ```php
 use Huwiya\TokenClaims;
@@ -309,8 +254,10 @@ use Illuminate\Database\Eloquent\Builder;
 
 public function huwiyaQueryForClaims(Builder $query, TokenClaims $claims): Builder
 {
-    return parent::huwiyaQueryForClaims($query, $claims)
-        ->orWhere(fn (Builder $q) => $q->whereNull('huwiya_id')->where('email', $claims->email));
+    return $query->where(function (Builder $q) use ($claims) {
+        $q->where('huwiya_id', $claims->id)
+          ->orWhere(fn ($q2) => $q2->whereNull('huwiya_id')->where('email', $claims->email));
+    });
 }
 ```
 
@@ -325,7 +272,7 @@ public static function newHuwiyaQuery(): Builder
 
 ### User creation
 
-Override `createHuwiyaUser()` when you need creation logic beyond simple attribute mapping — assigning roles, attaching to a tenant, wrapping in a transaction:
+Override `createHuwiyaUser()` when you need creation logic beyond attribute mapping — assigning roles, attaching to a tenant, wrapping in a transaction:
 
 ```php
 use Huwiya\TokenClaims;
@@ -350,11 +297,9 @@ public static function createHuwiyaUser(TokenClaims $claims): static
 }
 ```
 
-The default implementation delegates to `getHuwiyaCreateAttributes()` — override that if you only need to shape the attribute array, or override `createHuwiyaUser()` itself for full control.
-
 ### User update
 
-Override `updateHuwiyaUser()` when you need update logic beyond simple attribute sync — syncing roles from scopes, conditionally skipping updates, tracking last login:
+Override `updateHuwiyaUser()` when you need update logic beyond attribute sync — syncing roles from scopes, recording last-login timestamp, conditionally skipping updates:
 
 ```php
 use Huwiya\TokenClaims;
@@ -362,7 +307,7 @@ use Huwiya\TokenClaims;
 public function updateHuwiyaUser(TokenClaims $claims): void
 {
     $this->update(array_merge(
-        $this->getHuwiyaUpdateAttributes($claims, $this->isHuwiyaInvitationClaim()),
+        $this->getHuwiyaUpdateAttributes($claims),
         ['last_login_at' => now()],
     ));
 
@@ -372,25 +317,27 @@ public function updateHuwiyaUser(TokenClaims $claims): void
 
 The default implementation delegates to `getHuwiyaUpdateAttributes()` and skips the write when it returns an empty array.
 
-### Lifecycle hooks
+### Disabling auto-registration
 
-The trait provides `before` and `after` hooks for both creation and update. These are no-op methods you can override for side effects without replacing the core logic:
+By default, users that do not exist locally are created on first login. Override `shouldAutoRegister()` to reject unknown users:
 
 ```php
-use Huwiya\TokenClaims;
-
-public function beforeHuwiyaCreate(TokenClaims $claims): void
+public function shouldAutoRegister(?Huwiya\TokenClaims $claims = null): bool
 {
-    Log::info('Provisioning new user', ['huwiya_id' => $claims->id]);
-}
-
-public function afterHuwiyaCreate(TokenClaims $claims): void
-{
-    $this->notify(new WelcomeNotification);
+    return false;
 }
 ```
 
-For decoupled side effects (queued emails, dispatched jobs, external notifications), prefer [events](#events) over hooks.
+The `$claims` argument gives you access to the incoming token, so you can gate registration dynamically — for example, allowing only tokens carrying a specific scope:
+
+```php
+public function shouldAutoRegister(?Huwiya\TokenClaims $claims = null): bool
+{
+    return in_array('staff', $claims?->scopes ?? [], true);
+}
+```
+
+When disabled, unknown users cause `HuwiyaUserNotFoundException`. The web callback catches it and returns HTTP 403; the API guard simply returns no user, which `auth:api` middleware turns into 401.
 
 ### Multiple guards
 
@@ -411,7 +358,7 @@ Route::get('/login',       fn () => Huwiya::redirect('web'));
 Route::get('/admin/login', fn () => Huwiya::redirect('admin'));
 ```
 
-Because the guard name is a server-side literal, users cannot influence it via query string or cookie. The callback re-validates the bound guard against the current auth config before calling `login()` — if the guard is removed or its driver is changed between the redirect and the callback, the request fails rather than silently logging into an unintended guard.
+Because the guard name is a server-side literal, users cannot influence it via query string or cookie. The callback re-validates the bound guard against the current auth configuration before calling `login()` — if the guard is removed or its driver is changed between the redirect and the callback, the request fails rather than silently logging into an unintended guard.
 
 ### Authorization denial
 
@@ -462,45 +409,74 @@ You may swap the cookie and CSRF middleware used by the stateful pipeline via `c
 ],
 ```
 
-## Invitations
+## Recipe: invitations
 
-When invitations are enabled, the SDK falls back to a second lookup when the token's `huwiya_id` matches no local user: it looks for a row with matching `phone` and a NULL `huwiya_id`. If found, that row is "claimed" — the `huwiya_id` column is stamped from the token, other fields are synced, and the user is logged in.
+The SDK does not ship an invitation feature — but because `huwiya_id` is nullable and lookup is fully overridable, you can implement invitations in roughly ten lines of application code. There is nothing to enable in the SDK and no new concepts to learn.
 
-The common install is **invite-only**: pre-seed users by phone, reject anyone who is not invited. The SDK ships a convenience trait that wires the two relevant switches:
+The pattern: pre-seed user rows with `phone` but no `huwiya_id`. On first login, match the token to one of these rows by phone and stamp the `huwiya_id`.
 
 ```php
-use Huwiya\InteractsWithHuwiyaAsInviteOnly;
+use Huwiya\InteractsWithHuwiya;
+use Huwiya\TokenClaims;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Foundation\Auth\User as Authenticatable;
 
 class User extends Authenticatable
 {
-    use InteractsWithHuwiyaAsInviteOnly;
-}
+    use InteractsWithHuwiya;
 
-// Pre-seed an invitation:
+    // 1. Look up by huwiya_id first; fall back to an unclaimed row with
+    //    a matching phone. A real account always wins over a stale invite.
+    public function huwiyaQueryForClaims(Builder $query, TokenClaims $claims): Builder
+    {
+        return $query->where(function (Builder $q) use ($claims) {
+            $q->where('huwiya_id', $claims->id)
+              ->orWhere(fn ($q2) => $q2->whereNull('huwiya_id')->where('phone', $claims->phone));
+        })->orderByRaw('huwiya_id IS NULL');
+    }
+
+    // 2. On update, always stamp the id. This is a no-op for real accounts
+    //    (already set to the same value) and the claim step for invitations.
+    public function getHuwiyaUpdateAttributes(TokenClaims $claims): array
+    {
+        return [
+            'huwiya_id' => $claims->id,
+            'name'      => $claims->name,
+            'email'     => $claims->email,
+        ];
+    }
+
+    // 3. Invite-only onboarding: reject anyone who isn't pre-seeded.
+    public function shouldAutoRegister(?TokenClaims $claims = null): bool
+    {
+        return false;
+    }
+}
+```
+
+Pre-seed invitations from an admin tool:
+
+```php
 User::create(['phone' => '+9647700000001', 'name' => 'Pending Invitee']);
 ```
 
-Hybrid setups (both invitations and auto-registration on) are supported — override `invitationsEnabled()` on your regular `InteractsWithHuwiya` model to return `true` while leaving `shouldAutoRegister()` at its `true` default.
+That's the entire feature. A single query resolves the user on login, the claim happens as part of the normal update path, and the SDK does not need to know anything about invitations.
 
-Two lifecycle events fire around a claim: `HuwiyaInvitationClaiming` (before) and `HuwiyaInvitationClaimed` (after). Use them to send welcome emails, mark admin-side workflows complete, or emit audit events.
-
-Under concurrent first-logins for the same phone — two browser tabs racing to claim — the SDK retries once on unique-constraint violation and returns the row that won the race.
+> **Concurrency.** If two browsers race to claim the same row, Laravel's database driver will raise `UniqueConstraintViolationException` on the loser. Wrap `Huwiya::redirect()` in an exception handler on your login route, or catch the exception in a listener on `HuwiyaUserResolving` and re-query. In practice this is vanishingly rare — it requires two devices logging into the same unclaimed account within a few milliseconds.
 
 ## Events
 
 The SDK dispatches lifecycle events from inside the `InteractsWithHuwiya` trait, so both the web (OAuth callback) and API (JWT bearer) flows fire them consistently. Every event carries the `TokenClaims`, the `Authenticatable` user (when available), and the guard name.
 
-| Event                        | Payload                          | Fired when                                                                               |
-| ---------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------- |
-| `HuwiyaAuthenticating`       | `$claims`, `$guard`              | Before any database work.                                                                |
-| `HuwiyaUserResolving`        | `$claims`, `$query`, `$guard`    | Before the lookup query executes. Listeners may further constrain `$query`.              |
-| `HuwiyaUserCreating`         | `$claims`, `$guard`              | Before a new user is created (after `beforeHuwiyaCreate()`).                             |
-| `HuwiyaUserCreated`          | `$claims`, `$user`, `$guard`     | After a new user has been created (after `afterHuwiyaCreate()`).                         |
-| `HuwiyaUserUpdating`         | `$claims`, `$user`, `$guard`     | Before an existing user is updated (after `beforeHuwiyaUpdate()`).                       |
-| `HuwiyaUserUpdated`          | `$claims`, `$user`, `$guard`     | After an existing user has been updated (after `afterHuwiyaUpdate()`).                   |
-| `HuwiyaInvitationClaiming`   | `$claims`, `$user`, `$guard`     | Before an invitation row is claimed. Fires around the same update that stamps `huwiya_id`. |
-| `HuwiyaInvitationClaimed`    | `$claims`, `$user`, `$guard`     | After an invitation row has been claimed.                                                |
-| `HuwiyaAuthenticated`        | `$claims`, `$user`, `$guard`     | After the user has been resolved (created, updated, or claimed). Fires on every auth.    |
+| Event                     | Payload                          | Fired when                                                                               |
+| ------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------- |
+| `HuwiyaAuthenticating`    | `$claims`, `$guard`              | Before any database work.                                                                |
+| `HuwiyaUserResolving`     | `$claims`, `$query`, `$guard`    | Before the lookup query executes. Listeners may further constrain `$query`.              |
+| `HuwiyaUserCreating`      | `$claims`, `$guard`              | Before a new user is created.                                                            |
+| `HuwiyaUserCreated`       | `$claims`, `$user`, `$guard`     | After a new user has been created.                                                       |
+| `HuwiyaUserUpdating`      | `$claims`, `$user`, `$guard`     | Before an existing user is updated.                                                      |
+| `HuwiyaUserUpdated`       | `$claims`, `$user`, `$guard`     | After an existing user has been updated.                                                 |
+| `HuwiyaAuthenticated`     | `$claims`, `$user`, `$guard`     | After the user has been resolved (created or updated). Fires on every authentication.    |
 
 All event classes live under the `Huwiya\Events` namespace.
 

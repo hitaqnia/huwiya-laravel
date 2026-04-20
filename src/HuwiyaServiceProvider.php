@@ -42,39 +42,14 @@ class HuwiyaServiceProvider extends ServiceProvider
 
     protected function registerBlueprintMacros(): void
     {
-        if (! Blueprint::hasMacro('huwiyaIdentifier')) {
-            Blueprint::macro('huwiyaIdentifier', function (string $column = 'huwiya_id') {
-                /** @var Blueprint $this */
-                return $this->ulid($column)->nullable()->unique();
-            });
+        if (Blueprint::hasMacro('huwiyaIdentifier')) {
+            return;
         }
 
-        if (! Blueprint::hasMacro('huwiyaFields')) {
-            Blueprint::macro('huwiyaFields', function (array $map) {
-                /** @var Blueprint $this */
-                $defaults = [
-                    'huwiya_id' => fn (string $col) => $this->huwiyaIdentifier($col),
-                    'phone' => fn (string $col) => $this->string($col)->unique(),
-                    'email' => fn (string $col) => $this->string($col)->unique()->nullable(),
-                    'name' => fn (string $col) => $this->string($col)->nullable(),
-                    'locale' => fn (string $col) => $this->string($col, 10)->nullable(),
-                    'zoneinfo' => fn (string $col) => $this->string($col, 64)->nullable(),
-                    'theme' => fn (string $col) => $this->string($col, 16)->nullable(),
-                ];
-
-                foreach ($map as $claimKey => $column) {
-                    if ($column === false || $column === null || $column === '') {
-                        continue;
-                    }
-
-                    if (! isset($defaults[$claimKey])) {
-                        continue;
-                    }
-
-                    $defaults[$claimKey]($column);
-                }
-            });
-        }
+        Blueprint::macro('huwiyaIdentifier', function (string $column = 'huwiya_id') {
+            /** @var Blueprint $this */
+            return $this->ulid($column)->nullable()->unique();
+        });
     }
 
     protected function defineRoutes(): void

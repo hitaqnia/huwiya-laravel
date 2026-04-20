@@ -41,7 +41,10 @@ abstract class TestCase extends OrchestraTestCase
     {
         Schema::create('users', function (Blueprint $table) {
             $table->id();
-            $table->huwiyaFields(\Huwiya\Tests\Fixtures\User::huwiyaFieldsSchema());
+            $table->huwiyaIdentifier();
+            $table->string('phone')->unique();
+            $table->string('email')->unique()->nullable();
+            $table->string('name')->nullable();
             $table->rememberToken();
             $table->timestamps();
         });

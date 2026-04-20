@@ -86,7 +86,7 @@ it('falls back to config(huwiya.home) when no intended URL is bound', function (
 });
 
 it('returns 403 when auto-registration is disabled and user is unknown', function () {
-    config(['auth.providers.users.model' => \Huwiya\Tests\Fixtures\InviteOnlyUser::class]);
+    config(['auth.providers.users.model' => \Huwiya\Tests\Fixtures\StrictUser::class]);
 
     $jwt = createTestJwt([
         'id' => (string) Str::ulid(),

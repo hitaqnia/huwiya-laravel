@@ -53,6 +53,8 @@ it('creates a new user from claims when auto-registration is enabled', function 
     $claims = makeTestClaims([
         'id' => $newId,
         'name' => 'New User',
+        'phone' => '+9647100000001',
+        'email' => 'new-user@example.com',
     ]);
 
     $user = User::findOrCreateFromHuwiya($claims);
@@ -61,8 +63,8 @@ it('creates a new user from claims when auto-registration is enabled', function 
         ->and($user->exists)->toBeTrue()
         ->and($user->huwiya_id)->toBe($newId)
         ->and($user->name)->toBe('New User')
-        ->and($user->phone)->toBe($claims->phone)
-        ->and($user->email)->toBe($claims->email);
+        ->and($user->phone)->toBe('+9647100000001')
+        ->and($user->email)->toBe('new-user@example.com');
 });
 
 it('uses the configured identifier column', function () {
@@ -71,23 +73,15 @@ it('uses the configured identifier column', function () {
     expect($user->getHuwiyaIdentifierColumn())->toBe('huwiya_id');
 });
 
-it('returns default create and update attributes from the fields map', function () {
-    $user = new User;
-    $claims = makeTestClaims([
-        'name' => 'Test User',
-        'phone' => '+964123456789',
-        'email' => 'test@example.com',
-    ]);
+it('trait defaults expose a minimal name-only sync that apps extend', function () {
+    // A model that only uses the trait (no overrides) should see the
+    // minimal default — name only. The test User fixture widens this.
+    $minimal = new class extends \Illuminate\Database\Eloquent\Model {
+        use \Huwiya\InteractsWithHuwiya;
+    };
 
-    $expected = [
-        'phone' => '+964123456789',
-        'email' => 'test@example.com',
-        'name' => 'Test User',
-        'locale' => 'en',
-        'zoneinfo' => 'Asia/Baghdad',
-        'theme' => 'light',
-    ];
+    $claims = makeTestClaims(['name' => 'Test User']);
 
-    expect($user->getHuwiyaCreateAttributes($claims))->toBe($expected);
-    expect($user->getHuwiyaUpdateAttributes($claims))->toBe($expected);
+    expect($minimal->getHuwiyaCreateAttributes($claims))->toBe(['name' => 'Test User']);
+    expect($minimal->getHuwiyaUpdateAttributes($claims))->toBe(['name' => 'Test User']);
 });

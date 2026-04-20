@@ -6,7 +6,12 @@ use Huwiya\InteractsWithHuwiya;
 use Huwiya\TokenClaims;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 
-class InviteOnlyUser extends Authenticatable
+/**
+ * Fixture with auto-registration disabled — used to exercise the "user
+ * not found" callback branch. Shares the `users` table with the default
+ * User fixture.
+ */
+class StrictUser extends Authenticatable
 {
     use InteractsWithHuwiya;
 
