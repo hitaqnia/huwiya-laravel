@@ -32,12 +32,6 @@ class HuwiyaServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__.'/../config/huwiya.php' => config_path('huwiya.php'),
             ], 'huwiya-config');
-
-            $this->publishes([
-                __DIR__.'/../database/stubs/create_users_table.php.stub' => database_path(
-                    'migrations/'.date('Y_m_d_His').'_create_users_table.php',
-                ),
-            ], 'huwiya-migrations');
         }
     }
 
