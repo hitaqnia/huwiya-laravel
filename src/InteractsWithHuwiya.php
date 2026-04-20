@@ -4,6 +4,8 @@ namespace Huwiya;
 
 use Huwiya\Events\HuwiyaAuthenticated;
 use Huwiya\Events\HuwiyaAuthenticating;
+use Huwiya\Events\HuwiyaInvitationClaimed;
+use Huwiya\Events\HuwiyaInvitationClaiming;
 use Huwiya\Events\HuwiyaUserCreated;
 use Huwiya\Events\HuwiyaUserCreating;
 use Huwiya\Events\HuwiyaUserResolving;
@@ -20,8 +22,29 @@ trait InteractsWithHuwiya
     public ?TokenClaims $huwiyaToken = null;
 
     /**
-     * Ensure the Huwiya identifier column is mass-assignable without
-     * clobbering the developer's own $fillable / $guarded configuration.
+     * Map of Huwiya claim keys -> local DB column names.
+     *
+     * Default covers every claim Huwiya provides. Override per model to
+     * disable fields (omit the key or set the value to false) or rename
+     * columns (change the value). `huwiya_id` is always included via
+     * getHuwiyaFieldsMap().
+     *
+     * Supported claim keys: phone, email, name, locale, zoneinfo, theme.
+     *
+     * @var array<string, string|false>
+     */
+    protected array $huwiyaFieldsMap = [
+        'phone' => 'phone',
+        'email' => 'email',
+        'name' => 'name',
+        'locale' => 'locale',
+        'zoneinfo' => 'zoneinfo',
+        'theme' => 'theme',
+    ];
+
+    /**
+     * Ensure Huwiya-synced columns are mass-assignable without clobbering
+     * the developer's own $fillable / $guarded configuration.
      */
     public function initializeInteractsWithHuwiya(): void
     {
@@ -29,17 +52,16 @@ trait InteractsWithHuwiya
             return;
         }
 
-        $column = $this->getHuwiyaIdentifierColumn();
+        $columns = array_values($this->getHuwiyaFieldsMap());
+        $missing = array_values(array_diff($columns, $this->getFillable()));
 
-        if (in_array($column, $this->getFillable(), true)) {
-            return;
+        if ($missing !== []) {
+            $this->mergeFillable($missing);
         }
-
-        $this->mergeFillable([$column]);
     }
 
     // -------------------------------------------------------------------------
-    //  Identifier & Gate
+    //  Identifier, Field Map & Gates
     // -------------------------------------------------------------------------
 
     /**
@@ -51,11 +73,60 @@ trait InteractsWithHuwiya
     }
 
     /**
+     * Resolved map of claim keys -> column names for this model.
+     * `huwiya_id` is always force-included; `false`/null/empty values are stripped.
+     *
+     * @return array<string, string>
+     */
+    public function getHuwiyaFieldsMap(): array
+    {
+        $map = array_filter(
+            $this->huwiyaFieldsMap,
+            fn ($v) => $v !== false && $v !== null && $v !== '',
+        );
+
+        $map['huwiya_id'] = $this->getHuwiyaIdentifierColumn();
+
+        return $map;
+    }
+
+    /**
+     * Static helper consumed by the `huwiyaFields()` Blueprint macro so that
+     * schema and runtime read the same source of truth.
+     *
+     * @return array<string, string>
+     */
+    public static function huwiyaFieldsSchema(): array
+    {
+        return (new static)->getHuwiyaFieldsMap();
+    }
+
+    /**
      * Determine if new users should be auto-registered on first login.
      */
     public function shouldAutoRegister(?TokenClaims $claims = null): bool
     {
         return true;
+    }
+
+    /**
+     * Determine if invitation claiming is enabled for this model.
+     *
+     * When enabled, user resolution falls back to matching by phone
+     * (where huwiya_id IS NULL) after failing to find an exact
+     * huwiya_id match. Override per model to turn this on.
+     */
+    public function invitationsEnabled(): bool
+    {
+        return false;
+    }
+
+    /**
+     * Determine if the resolved user is an unclaimed invitation row.
+     */
+    public function isHuwiyaInvitationClaim(): bool
+    {
+        return $this->getAttribute($this->getHuwiyaIdentifierColumn()) === null;
     }
 
     // -------------------------------------------------------------------------
@@ -76,12 +147,32 @@ trait InteractsWithHuwiya
     /**
      * Constrain the query to match a user from the given claims.
      *
-     * Override to match by multiple columns (e.g. huwiya_id OR email),
-     * handle soft-deletes, or apply additional filters.
+     * When invitations are enabled and a phone column is configured, the
+     * query falls back to `huwiya_id IS NULL AND phone = ?` in a single
+     * round-trip. A real huwiya_id match is ordered first so an existing
+     * account beats a stale invitation sharing the same phone.
      */
     public function huwiyaQueryForClaims(Builder $query, TokenClaims $claims): Builder
     {
-        return $query->where($this->getHuwiyaIdentifierColumn(), $claims->id);
+        $idColumn = $this->getHuwiyaIdentifierColumn();
+        $map = $this->getHuwiyaFieldsMap();
+        $phoneColumn = $map['phone'] ?? null;
+
+        if (! $this->invitationsEnabled() || $phoneColumn === null || $claims->phone === '') {
+            return $query->where($idColumn, $claims->id);
+        }
+
+        $query->where(function (Builder $q) use ($idColumn, $phoneColumn, $claims) {
+            $q->where($idColumn, $claims->id)
+                ->orWhere(function (Builder $q2) use ($idColumn, $phoneColumn, $claims) {
+                    $q2->whereNull($idColumn)->where($phoneColumn, $claims->phone);
+                });
+        });
+
+        $grammar = $query->getQuery()->getGrammar();
+        $wrapped = $grammar->wrap($idColumn);
+
+        return $query->orderByRaw("$wrapped IS NULL");
     }
 
     /**
@@ -104,13 +195,28 @@ trait InteractsWithHuwiya
     /**
      * Get the attributes to fill when creating a new user from Huwiya claims.
      *
+     * Iterates the field map and copies each configured claim to its mapped
+     * column. The identifier is merged in by `createHuwiyaUser()`.
+     *
      * @return array<string, mixed>
      */
     public function getHuwiyaCreateAttributes(TokenClaims $claims): array
     {
-        return [
-            'name' => $claims->name,
-        ];
+        $attributes = [];
+
+        foreach ($this->getHuwiyaFieldsMap() as $claimKey => $column) {
+            if ($claimKey === 'huwiya_id') {
+                continue;
+            }
+
+            if (! property_exists($claims, $claimKey)) {
+                continue;
+            }
+
+            $attributes[$column] = $claims->{$claimKey};
+        }
+
+        return $attributes;
     }
 
     /**
@@ -146,24 +252,42 @@ trait InteractsWithHuwiya
     /**
      * Get the attributes to update on an existing user from Huwiya claims.
      *
+     * When $claimingInvitation is true, the identifier column is included
+     * so the invitation row gets stamped with the Huwiya subject id.
+     *
      * @return array<string, mixed>
      */
-    public function getHuwiyaUpdateAttributes(TokenClaims $claims): array
+    public function getHuwiyaUpdateAttributes(TokenClaims $claims, bool $claimingInvitation = false): array
     {
-        return [
-            'name' => $claims->name,
-        ];
+        $attributes = [];
+
+        foreach ($this->getHuwiyaFieldsMap() as $claimKey => $column) {
+            if ($claimKey === 'huwiya_id') {
+                if ($claimingInvitation) {
+                    $attributes[$column] = $claims->id;
+                }
+                continue;
+            }
+
+            if (! property_exists($claims, $claimKey)) {
+                continue;
+            }
+
+            $attributes[$column] = $claims->{$claimKey};
+        }
+
+        return $attributes;
     }
 
     /**
      * Update the existing user with data from the given Huwiya claims.
      *
-     * Override to sync roles from scopes, conditionally skip updates,
-     * or perform any custom update logic.
+     * Detects invitation claims (huwiya_id currently NULL) and includes
+     * the identifier in the update payload.
      */
     public function updateHuwiyaUser(TokenClaims $claims): void
     {
-        $attributes = $this->getHuwiyaUpdateAttributes($claims);
+        $attributes = $this->getHuwiyaUpdateAttributes($claims, $this->isHuwiyaInvitationClaim());
 
         if ($attributes !== []) {
             $this->update($attributes);
@@ -210,6 +334,12 @@ trait InteractsWithHuwiya
             $user->afterHuwiyaCreate($claims);
             event(new HuwiyaUserCreated($claims, $user, $guard));
         } else {
+            $isClaim = $user->isHuwiyaInvitationClaim();
+
+            if ($isClaim) {
+                event(new HuwiyaInvitationClaiming($claims, $user, $guard));
+            }
+
             $user->beforeHuwiyaUpdate($claims);
             event(new HuwiyaUserUpdating($claims, $user, $guard));
 
@@ -217,6 +347,10 @@ trait InteractsWithHuwiya
 
             $user->afterHuwiyaUpdate($claims);
             event(new HuwiyaUserUpdated($claims, $user, $guard));
+
+            if ($isClaim) {
+                event(new HuwiyaInvitationClaimed($claims, $user, $guard));
+            }
         }
 
         event(new HuwiyaAuthenticated($claims, $user, $guard));

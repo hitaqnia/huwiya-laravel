@@ -12,8 +12,13 @@ class UserFactory extends Factory
     public function definition(): array
     {
         return [
-            'name' => fake()->name(),
             'huwiya_id' => (string) Str::ulid(),
+            'name' => fake()->name(),
+            'phone' => '+964'.fake()->unique()->numerify('#########'),
+            'email' => fake()->unique()->safeEmail(),
+            'locale' => 'en',
+            'zoneinfo' => 'Asia/Baghdad',
+            'theme' => 'light',
         ];
     }
 }

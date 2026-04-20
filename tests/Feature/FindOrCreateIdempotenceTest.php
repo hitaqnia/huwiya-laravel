@@ -10,6 +10,8 @@ it('is idempotent when called repeatedly with the same subject identifier', func
     $claims = TokenClaims::fromArray([
         'id' => $id,
         'name' => 'Repeat User',
+        'phone' => '+9647700000001',
+        'email' => 'repeat@example.com',
         'locale' => 'en',
         'zoneinfo' => 'Asia/Baghdad',
         'theme' => 'light',
@@ -36,6 +38,8 @@ it('updates existing user attributes on repeat login', function () {
     $claims = TokenClaims::fromArray([
         'id' => $id,
         'name' => 'New Name',
+        'phone' => '+9647700000002',
+        'email' => 'new@example.com',
         'locale' => 'en',
         'zoneinfo' => 'Asia/Baghdad',
         'theme' => 'light',

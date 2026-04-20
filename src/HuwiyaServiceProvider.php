@@ -30,19 +30,50 @@ class HuwiyaServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__.'/../config/huwiya.php' => config_path('huwiya.php'),
             ], 'huwiya-config');
+
+            $this->publishes([
+                __DIR__.'/../database/stubs/create_users_table.php.stub' => database_path(
+                    'migrations/'.date('Y_m_d_His').'_create_users_table.php',
+                ),
+            ], 'huwiya-migrations');
         }
     }
 
     protected function registerBlueprintMacros(): void
     {
-        if (Blueprint::hasMacro('huwiyaIdentifier')) {
-            return;
+        if (! Blueprint::hasMacro('huwiyaIdentifier')) {
+            Blueprint::macro('huwiyaIdentifier', function (string $column = 'huwiya_id') {
+                /** @var Blueprint $this */
+                return $this->ulid($column)->nullable()->unique();
+            });
         }
 
-        Blueprint::macro('huwiyaIdentifier', function (string $column = 'huwiya_id') {
-            /** @var Blueprint $this */
-            return $this->ulid($column)->unique();
-        });
+        if (! Blueprint::hasMacro('huwiyaFields')) {
+            Blueprint::macro('huwiyaFields', function (array $map) {
+                /** @var Blueprint $this */
+                $defaults = [
+                    'huwiya_id' => fn (string $col) => $this->huwiyaIdentifier($col),
+                    'phone' => fn (string $col) => $this->string($col)->unique(),
+                    'email' => fn (string $col) => $this->string($col)->unique()->nullable(),
+                    'name' => fn (string $col) => $this->string($col)->nullable(),
+                    'locale' => fn (string $col) => $this->string($col, 10)->nullable(),
+                    'zoneinfo' => fn (string $col) => $this->string($col, 64)->nullable(),
+                    'theme' => fn (string $col) => $this->string($col, 16)->nullable(),
+                ];
+
+                foreach ($map as $claimKey => $column) {
+                    if ($column === false || $column === null || $column === '') {
+                        continue;
+                    }
+
+                    if (! isset($defaults[$claimKey])) {
+                        continue;
+                    }
+
+                    $defaults[$claimKey]($column);
+                }
+            });
+        }
     }
 
     protected function defineRoutes(): void

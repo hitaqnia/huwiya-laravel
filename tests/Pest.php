@@ -81,6 +81,8 @@ function createTestJwt(
     $defaults = [
         'iat' => time(),
         'exp' => time() + 3600,
+        'phone' => '+964'.random_int(100_000_000, 999_999_999),
+        'email' => 'user-'.bin2hex(random_bytes(4)).'@example.com',
         'locale' => 'en',
         'zoneinfo' => 'Asia/Baghdad',
         'theme' => 'light',

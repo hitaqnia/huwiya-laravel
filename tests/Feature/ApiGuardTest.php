@@ -155,6 +155,8 @@ it('skips signature verification when disabled', function () {
     $payload = rtrim(strtr(base64_encode(json_encode([
         'id' => $user->huwiya_id,
         'name' => $user->name,
+        'phone' => $user->phone,
+        'email' => $user->email,
         'locale' => 'en',
         'zoneinfo' => 'Asia/Baghdad',
         'theme' => 'light',

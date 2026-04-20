@@ -9,6 +9,8 @@ function makeTestClaims(array $overrides = []): TokenClaims
     return new TokenClaims(
         id: $overrides['id'] ?? (string) Str::ulid(),
         name: $overrides['name'] ?? 'Test User',
+        phone: $overrides['phone'] ?? '+9647'.random_int(10_000_000, 99_999_999),
+        email: $overrides['email'] ?? 'user-'.bin2hex(random_bytes(4)).'@example.com',
         locale: $overrides['locale'] ?? 'en',
         zoneinfo: $overrides['zoneinfo'] ?? 'Asia/Baghdad',
         theme: $overrides['theme'] ?? 'light',
@@ -35,6 +37,8 @@ it('finds and updates an existing user from claims', function () {
     $claims = makeTestClaims([
         'id' => $user->huwiya_id,
         'name' => 'New Name',
+        'phone' => $user->phone,
+        'email' => $user->email,
     ]);
 
     $result = User::findOrCreateFromHuwiya($claims);
@@ -56,7 +60,9 @@ it('creates a new user from claims when auto-registration is enabled', function 
     expect($user)->toBeInstanceOf(User::class)
         ->and($user->exists)->toBeTrue()
         ->and($user->huwiya_id)->toBe($newId)
-        ->and($user->name)->toBe('New User');
+        ->and($user->name)->toBe('New User')
+        ->and($user->phone)->toBe($claims->phone)
+        ->and($user->email)->toBe($claims->email);
 });
 
 it('uses the configured identifier column', function () {
@@ -65,15 +71,23 @@ it('uses the configured identifier column', function () {
     expect($user->getHuwiyaIdentifierColumn())->toBe('huwiya_id');
 });
 
-it('returns default create and update attributes', function () {
+it('returns default create and update attributes from the fields map', function () {
     $user = new User;
-    $claims = makeTestClaims(['name' => 'Test User']);
-
-    expect($user->getHuwiyaCreateAttributes($claims))->toBe([
+    $claims = makeTestClaims([
         'name' => 'Test User',
+        'phone' => '+964123456789',
+        'email' => 'test@example.com',
     ]);
 
-    expect($user->getHuwiyaUpdateAttributes($claims))->toBe([
+    $expected = [
+        'phone' => '+964123456789',
+        'email' => 'test@example.com',
         'name' => 'Test User',
-    ]);
+        'locale' => 'en',
+        'zoneinfo' => 'Asia/Baghdad',
+        'theme' => 'light',
+    ];
+
+    expect($user->getHuwiyaCreateAttributes($claims))->toBe($expected);
+    expect($user->getHuwiyaUpdateAttributes($claims))->toBe($expected);
 });

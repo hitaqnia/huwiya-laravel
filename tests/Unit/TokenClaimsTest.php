@@ -8,24 +8,39 @@ function validUlid(): string
     return (string) Str::ulid();
 }
 
-it('creates claims from array', function () {
-    $id = validUlid();
-
-    $claims = TokenClaims::fromArray([
-        'id' => $id,
-        'name' => 'John Doe',
+function validClaimsArray(array $overrides = []): array
+{
+    return array_merge([
+        'id' => validUlid(),
+        'name' => 'John',
+        'phone' => '+9647700000000',
+        'email' => 'user@example.com',
         'locale' => 'en',
         'zoneinfo' => 'Asia/Baghdad',
         'theme' => 'light',
+        'scopes' => [],
+    ], $overrides);
+}
+
+it('creates claims from array', function () {
+    $id = validUlid();
+
+    $claims = TokenClaims::fromArray(validClaimsArray([
+        'id' => $id,
+        'name' => 'John Doe',
+        'phone' => '+964770',
+        'email' => 'john@example.com',
         'scopes' => ['profile', 'email'],
         'iss' => 'https://idp.example.com',
         'iat' => 1000000,
         'exp' => 2000000,
         'aud' => 'my-app',
-    ]);
+    ]));
 
     expect($claims->id)->toBe($id)
         ->and($claims->name)->toBe('John Doe')
+        ->and($claims->phone)->toBe('+964770')
+        ->and($claims->email)->toBe('john@example.com')
         ->and($claims->locale)->toBe('en')
         ->and($claims->zoneinfo)->toBe('Asia/Baghdad')
         ->and($claims->theme)->toBe('light')
@@ -37,27 +52,13 @@ it('creates claims from array', function () {
 });
 
 it('accepts an empty scopes array', function () {
-    $claims = TokenClaims::fromArray([
-        'id' => validUlid(),
-        'name' => 'John',
-        'locale' => 'en',
-        'zoneinfo' => 'Asia/Baghdad',
-        'theme' => 'light',
-        'scopes' => [],
-    ]);
+    $claims = TokenClaims::fromArray(validClaimsArray());
 
     expect($claims->scopes)->toBe([]);
 });
 
 it('creates claims with optional jwt fields defaulting to null', function () {
-    $claims = TokenClaims::fromArray([
-        'id' => validUlid(),
-        'name' => 'John',
-        'locale' => 'en',
-        'zoneinfo' => 'Asia/Baghdad',
-        'theme' => 'light',
-        'scopes' => [],
-    ]);
+    $claims = TokenClaims::fromArray(validClaimsArray());
 
     expect($claims->issuer)->toBeNull()
         ->and($claims->issuedAt)->toBeNull()
@@ -67,15 +68,14 @@ it('creates claims with optional jwt fields defaulting to null', function () {
 
 it('decodes claims from a JWT string', function () {
     $id = validUlid();
-    $payload = base64_encode(json_encode([
+    $payload = base64_encode(json_encode(validClaimsArray([
         'id' => $id,
         'name' => 'Jane Doe',
         'locale' => 'ar',
-        'zoneinfo' => 'Asia/Baghdad',
         'theme' => 'dark',
         'scopes' => ['profile'],
         'exp' => 9999999999,
-    ]));
+    ])));
 
     $token = "eyJhbGciOiJSUzI1NiJ9.{$payload}.fake-signature";
 
@@ -98,46 +98,25 @@ it('throws InvalidTokenClaimsException when required claims are missing', functi
     ]);
 })->throws(
     \Huwiya\Exceptions\InvalidTokenClaimsException::class,
-    'missing required keys: name, locale, zoneinfo, theme, scopes',
+    'missing required keys: name, phone, email, locale, zoneinfo, theme, scopes',
 );
 
 it('throws InvalidTokenClaimsException when a required claim is empty', function () {
-    TokenClaims::fromArray([
-        'id' => validUlid(),
-        'name' => '',
-        'locale' => 'en',
-        'zoneinfo' => 'Asia/Baghdad',
-        'theme' => 'light',
-        'scopes' => [],
-    ]);
+    TokenClaims::fromArray(validClaimsArray(['name' => '']));
 })->throws(
     \Huwiya\Exceptions\InvalidTokenClaimsException::class,
     'missing required keys: name',
 );
 
 it('throws InvalidTokenClaimsException when scopes is not an array', function () {
-    TokenClaims::fromArray([
-        'id' => validUlid(),
-        'name' => 'John',
-        'locale' => 'en',
-        'zoneinfo' => 'Asia/Baghdad',
-        'theme' => 'light',
-        'scopes' => 'profile',
-    ]);
+    TokenClaims::fromArray(validClaimsArray(['scopes' => 'profile']));
 })->throws(
     \Huwiya\Exceptions\InvalidTokenClaimsException::class,
     'missing required keys: scopes',
 );
 
 it('throws InvalidTokenClaimsException when id is not a valid ULID', function () {
-    TokenClaims::fromArray([
-        'id' => 'not-a-ulid',
-        'name' => 'John',
-        'locale' => 'en',
-        'zoneinfo' => 'Asia/Baghdad',
-        'theme' => 'light',
-        'scopes' => [],
-    ]);
+    TokenClaims::fromArray(validClaimsArray(['id' => 'not-a-ulid']));
 })->throws(
     \Huwiya\Exceptions\InvalidTokenClaimsException::class,
     'is not a valid ULID',
@@ -148,56 +127,25 @@ it('throws on invalid base64 payload', function () {
 })->throws(RuntimeException::class, 'Failed to decode token payload.');
 
 it('reports not expired when expiresAt is null', function () {
-    $claims = TokenClaims::fromArray([
-        'id' => validUlid(),
-        'name' => 'John',
-        'locale' => 'en',
-        'zoneinfo' => 'Asia/Baghdad',
-        'theme' => 'light',
-        'scopes' => [],
-    ]);
+    $claims = TokenClaims::fromArray(validClaimsArray());
 
     expect($claims->isExpired())->toBeFalse();
 });
 
 it('reports not expired when token is still valid', function () {
-    $claims = TokenClaims::fromArray([
-        'id' => validUlid(),
-        'name' => 'John',
-        'locale' => 'en',
-        'zoneinfo' => 'Asia/Baghdad',
-        'theme' => 'light',
-        'scopes' => [],
-        'exp' => time() + 3600,
-    ]);
+    $claims = TokenClaims::fromArray(validClaimsArray(['exp' => time() + 3600]));
 
     expect($claims->isExpired())->toBeFalse();
 });
 
 it('reports expired when token has passed', function () {
-    $claims = TokenClaims::fromArray([
-        'id' => validUlid(),
-        'name' => 'John',
-        'locale' => 'en',
-        'zoneinfo' => 'Asia/Baghdad',
-        'theme' => 'light',
-        'scopes' => [],
-        'exp' => time() - 100,
-    ]);
+    $claims = TokenClaims::fromArray(validClaimsArray(['exp' => time() - 100]));
 
     expect($claims->isExpired())->toBeTrue();
 });
 
 it('respects leeway for expiration check', function () {
-    $claims = TokenClaims::fromArray([
-        'id' => validUlid(),
-        'name' => 'John',
-        'locale' => 'en',
-        'zoneinfo' => 'Asia/Baghdad',
-        'theme' => 'light',
-        'scopes' => [],
-        'exp' => time() - 30,
-    ]);
+    $claims = TokenClaims::fromArray(validClaimsArray(['exp' => time() - 30]));
 
     expect($claims->isExpired(leeway: 60))->toBeFalse()
         ->and($claims->isExpired(leeway: 10))->toBeTrue();
