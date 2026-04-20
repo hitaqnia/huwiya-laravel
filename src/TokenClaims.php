@@ -15,7 +15,7 @@ class TokenClaims
         public readonly string $id,
         public readonly string $name,
         public readonly string $phone,
-        public readonly string $email,
+        public readonly ?string $email = null,
         public readonly string $locale = '',
         public readonly string $zoneinfo = '',
         public readonly string $theme = '',
@@ -35,9 +35,11 @@ class TokenClaims
     {
         $missing = [];
 
-        // Identity fields required — SDK contract. Preference fields (locale,
-        // zoneinfo, theme) are optional; absent values default to empty string.
-        foreach (['id', 'name', 'phone', 'email'] as $required) {
+        // Huwiya is phone-first, so id/name/phone are required. email is
+        // optional — users may have no email associated. Preference fields
+        // (locale, zoneinfo, theme) are optional; absent values default to
+        // empty string.
+        foreach (['id', 'name', 'phone'] as $required) {
             if (! array_key_exists($required, $claims) || $claims[$required] === null || $claims[$required] === '') {
                 $missing[] = $required;
             }
@@ -57,11 +59,18 @@ class TokenClaims
             throw InvalidTokenClaimsException::invalidUlid($id);
         }
 
+        $email = $claims['email'] ?? null;
+        if ($email !== null && $email !== '') {
+            $email = (string) $email;
+        } else {
+            $email = null;
+        }
+
         return new self(
             id: $id,
             name: (string) $claims['name'],
             phone: (string) $claims['phone'],
-            email: (string) $claims['email'],
+            email: $email,
             locale: isset($claims['locale']) ? (string) $claims['locale'] : '',
             zoneinfo: isset($claims['zoneinfo']) ? (string) $claims['zoneinfo'] : '',
             theme: isset($claims['theme']) ? (string) $claims['theme'] : '',

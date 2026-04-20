@@ -27,7 +27,8 @@ The official Laravel SDK for the [Huwiya](https://huwiya.id) Identity Provider. 
   - [Multiple guards](#multiple-guards)
   - [Authorization denial](#authorization-denial)
   - [Stateful middleware for SPAs](#stateful-middleware-for-spas)
-- [Recipe: invitations](#recipe-invitations)
+- [Extensions](#extensions)
+  - [Invitations](#invitations)
 - [Events](#events)
 - [Testing](#testing)
 - [Errors](#errors)
@@ -233,16 +234,16 @@ Rename columns, derive values, or apply per-claim transformations freely — thi
 
 Claims available on `$claims`:
 
-| Property   | Required | Notes                                       |
-| ---------- | -------- | ------------------------------------------- |
-| `id`       | yes      | ULID — use with `getHuwiyaIdentifierColumn()`. |
-| `name`     | yes      |                                             |
-| `phone`    | yes      |                                             |
-| `email`    | yes      |                                             |
-| `locale`   | no       | Empty string if the IdP omitted it.         |
-| `zoneinfo` | no       | Empty string if the IdP omitted it.         |
-| `theme`    | no       | Empty string if the IdP omitted it.         |
-| `scopes`   | yes      | `array<int, string>`                        |
+| Property   | Type       | Required | Notes                                            |
+| ---------- | ---------- | -------- | ------------------------------------------------ |
+| `id`       | `string`   | yes      | ULID — use with `getHuwiyaIdentifierColumn()`.   |
+| `name`     | `string`   | yes      |                                                  |
+| `phone`    | `string`   | yes      | Huwiya is phone-first; always present.           |
+| `email`    | `?string`  | no       | `null` when the user has no email on record.     |
+| `locale`   | `string`   | no       | Empty string if the IdP omitted it.              |
+| `zoneinfo` | `string`   | no       | Empty string if the IdP omitted it.              |
+| `theme`    | `string`   | no       | Empty string if the IdP omitted it.              |
+| `scopes`   | `string[]` | yes      |                                                  |
 
 ### User lookup
 
@@ -409,11 +410,17 @@ You may swap the cookie and CSRF middleware used by the stateful pipeline via `c
 ],
 ```
 
-## Recipe: invitations
+## Extensions
 
-The SDK does not ship an invitation feature — but because `huwiya_id` is nullable and lookup is fully overridable, you can implement invitations in roughly ten lines of application code. There is nothing to enable in the SDK and no new concepts to learn.
+The SDK ships the minimum it needs to ship — guards, JWT verification, lifecycle trait, events. Anything built on top of that is an **extension**: application code that uses the SDK's extension points (`huwiyaQueryForClaims()`, `getHuwiyaCreateAttributes()`, `getHuwiyaUpdateAttributes()`, `shouldAutoRegister()`, and the event bus) to implement higher-level features.
 
-The pattern: pre-seed user rows with `phone` but no `huwiya_id`. On first login, match the token to one of these rows by phone and stamp the `huwiya_id`.
+The sections below document patterns we've seen repeatedly. Each is plain application code — drop it into your User model or a service provider, adapt it, own it. No flags to toggle in the SDK, no hidden behavior, no new concepts.
+
+### Invitations
+
+Pre-seed user rows with `phone` but no `huwiya_id`. On first login, match the token to a pre-seeded row by phone and stamp the `huwiya_id` — effectively linking a pending record to its Huwiya identity.
+
+Because `huwiya_id` is nullable and lookup is fully overridable, this takes roughly ten lines of application code.
 
 ```php
 use Huwiya\InteractsWithHuwiya;

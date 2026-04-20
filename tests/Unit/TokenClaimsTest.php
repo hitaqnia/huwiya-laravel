@@ -98,7 +98,7 @@ it('throws InvalidTokenClaimsException when required identity claims are missing
     ]);
 })->throws(
     \Huwiya\Exceptions\InvalidTokenClaimsException::class,
-    'missing required keys: name, phone, email, scopes',
+    'missing required keys: name, phone, scopes',
 );
 
 it('defaults preference claims (locale, zoneinfo, theme) to empty when omitted', function () {
@@ -113,6 +113,38 @@ it('defaults preference claims (locale, zoneinfo, theme) to empty when omitted',
     expect($claims->locale)->toBe('')
         ->and($claims->zoneinfo)->toBe('')
         ->and($claims->theme)->toBe('');
+});
+
+it('treats email as optional and null when omitted or empty', function () {
+    $withoutEmail = TokenClaims::fromArray([
+        'id' => validUlid(),
+        'name' => 'Jane',
+        'phone' => '+964770',
+        'scopes' => [],
+    ]);
+
+    $withBlankEmail = TokenClaims::fromArray([
+        'id' => validUlid(),
+        'name' => 'Jane',
+        'phone' => '+964770',
+        'email' => '',
+        'scopes' => [],
+    ]);
+
+    expect($withoutEmail->email)->toBeNull()
+        ->and($withBlankEmail->email)->toBeNull();
+});
+
+it('populates email when present', function () {
+    $claims = TokenClaims::fromArray([
+        'id' => validUlid(),
+        'name' => 'Jane',
+        'phone' => '+964770',
+        'email' => 'jane@example.com',
+        'scopes' => [],
+    ]);
+
+    expect($claims->email)->toBe('jane@example.com');
 });
 
 it('throws InvalidTokenClaimsException when a required claim is empty', function () {
