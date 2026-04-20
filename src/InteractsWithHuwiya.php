@@ -122,15 +122,29 @@ trait InteractsWithHuwiya
     }
 
     /**
-     * Decide what to do when writing a claim hits a unique-constraint
-     * violation on a recyclable column (typically phone or email). This is
-     * the single seam for "phone recycling" policy — the SDK has already
-     * detected the conflict, found the colliding row, and will retry the
-     * write once after this method returns.
+     * Decide what to do when a claim would collide with an existing row on a
+     * recyclable column (typically phone or email). Called once per (row,
+     * column) collision — so if the claim's phone matches one row and the
+     * claim's email matches another, this runs twice; if a single existing
+     * row collides on both columns, it runs twice (once per column) against
+     * the same row.
+     *
+     * Invocation happens *before* the write, from a single preflight SELECT.
+     * Your policy should clear the conflict (delete the stale row, null the
+     * column, transfer ownership, etc). After every (row, column) has been
+     * dispatched, the SDK performs the create/update; if a concurrent insert
+     * caused a race, the post-exception fallback dispatches once more and
+     * retries the write.
+     *
+     * Between dispatches, the SDK re-reads the colliding row from the DB. If
+     * a previous dispatch deleted it, subsequent dispatches for that row are
+     * skipped; if a previous dispatch cleared the next column (as a side
+     * effect), that column's dispatch is skipped too. This means policies
+     * that delete the whole row safely collapse multi-column collisions into
+     * a single call.
      *
      * Default: throw HuwiyaConflictException. Override to implement your
-     * policy (delete the stale row, transfer ownership, throw a custom
-     * exception with a support flow, etc).
+     * recycling policy.
      *
      * @throws HuwiyaConflictException
      */
@@ -227,11 +241,21 @@ trait InteractsWithHuwiya
     {
         $instance = new static;
 
+        $createAttributes = $instance->getHuwiyaCreateAttributes($claims);
+
+        // Preflight: find every recyclable-column collision in one query and
+        // hand each to the policy. Much cheaper than create()→catch→retry and
+        // — unlike the catch path — surfaces *all* colliding columns, not just
+        // whichever one the DB happened to raise first.
+        static::preflightHuwiyaConflicts($claims, $createAttributes, excludingId: null);
+
         $attempt = fn () => static::create(array_merge(
             [$instance->getHuwiyaIdentifierColumn() => $claims->id],
-            $instance->getHuwiyaCreateAttributes($claims),
+            $createAttributes,
         ));
 
+        // A race between preflight and INSERT can still hit the unique index —
+        // fall back to the exception path so concurrent inserts get dispatched.
         try {
             return $attempt();
         } catch (UniqueConstraintViolationException $e) {
@@ -260,6 +284,11 @@ trait InteractsWithHuwiya
             return;
         }
 
+        // Preflight: resolve every recyclable-column collision in one query
+        // before touching the DB. Exclude this row's own key so an unchanged
+        // phone/email doesn't look like a self-collision.
+        static::preflightHuwiyaConflicts($claims, $attributes, excludingId: $this->getKey());
+
         try {
             $this->update($attributes);
 
@@ -272,6 +301,131 @@ trait InteractsWithHuwiya
             $this->update($attributes);
         } catch (UniqueConstraintViolationException $e) {
             throw HuwiyaConflictException::unresolved($claims, $e);
+        }
+    }
+
+    /**
+     * @internal
+     *
+     * Find every row that would collide with the claim data on any recyclable
+     * column, and invoke `resolveHuwiyaConflict` once per (row, column) pair.
+     *
+     * This happens before the write, so the app's policy can clear all
+     * conflicts in a single auth flow — even when the same claim collides on
+     * multiple columns (e.g. phone *and* email). One indexed SELECT replaces
+     * the create→fail→retry loop in the common case.
+     *
+     * Dispatch rules:
+     *  - Columns in `getHuwiyaConflictColumns()` that aren't being written
+     *    (not in `$attributes`) are skipped — no write, no possible conflict.
+     *  - Columns whose claim property is null/empty are skipped (mirrors the
+     *    post-exception dispatcher; null values can't violate a unique index).
+     *  - If the same existing row collides on multiple columns, the policy is
+     *    called once per (row, column). Deduplicating by row would hide the
+     *    second column from a policy that needs to clear each independently.
+     *    Between calls the row is refreshed from the DB — if the previous
+     *    dispatch deleted it, later dispatches for that row are skipped, and
+     *    if the previous dispatch cleared the next column as a side effect,
+     *    that dispatch is skipped too.
+     *  - Dispatch order is the order in `getHuwiyaConflictColumns()`, so apps
+     *    can rely on (say) phone being resolved before email.
+     *  - `$excludingId` is the primary key of the row being updated (or null
+     *    on create). Rows with that key are ignored so an unchanged value on
+     *    the same row isn't mistaken for a collision with someone else.
+     *
+     * @param  array<string, mixed>  $attributes  Columns about to be written.
+     * @param  int|string|null  $excludingId  Primary key of the row being updated, if any.
+     *
+     * @throws HuwiyaConflictException
+     */
+    protected static function preflightHuwiyaConflicts(
+        TokenClaims $claims,
+        array $attributes,
+        int|string|null $excludingId,
+    ): void {
+        $instance = new static;
+
+        // Build the {column => claim-value} map for columns that are (a) being
+        // written, (b) configured as recyclable, (c) readable from the claim,
+        // and (d) non-empty. Anything filtered out here cannot trip a unique
+        // constraint on this write, so skipping it is safe and saves a query.
+        $candidates = [];
+
+        foreach ($instance->getHuwiyaConflictColumns() as $column) {
+            if (! array_key_exists($column, $attributes)) {
+                continue;
+            }
+
+            if (! property_exists($claims, $column)) {
+                continue;
+            }
+
+            $value = $claims->{$column};
+
+            if ($value === null || $value === '') {
+                continue;
+            }
+
+            $candidates[$column] = $value;
+        }
+
+        if ($candidates === []) {
+            return;
+        }
+
+        $query = static::newHuwiyaQuery();
+
+        $query->where(function ($q) use ($candidates) {
+            foreach ($candidates as $column => $value) {
+                $q->orWhere($column, $value);
+            }
+        });
+
+        if ($excludingId !== null) {
+            $query->where($instance->getKeyName(), '!=', $excludingId);
+        }
+
+        $rows = $query->get();
+
+        if ($rows->isEmpty()) {
+            return;
+        }
+
+        // Emit (row, column) pairs in the configured column order. A single
+        // row that collides on two columns yields two dispatches — one per
+        // column — so the app policy can clear each side independently.
+        //
+        // Between dispatches we refresh the row from the DB because the
+        // previous dispatch may have deleted it or mutated its columns
+        // (e.g. nulled the email). We skip subsequent dispatches against a
+        // gone row, and re-check the column value against the latest state
+        // so a policy that nulled column A doesn't also get called for a
+        // column B it already cleared as a side effect.
+        $rowKey = $instance->getKeyName();
+        $alive = [];
+
+        foreach ($rows as $row) {
+            $alive[(string) $row->{$rowKey}] = $row;
+        }
+
+        foreach ($candidates as $column => $value) {
+            foreach ($alive as $key => $row) {
+                if ((string) $row->{$column} !== (string) $value) {
+                    continue;
+                }
+
+                $instance->resolveHuwiyaConflict($claims, $row, $column);
+
+                $refreshed = $row->fresh();
+
+                if ($refreshed === null) {
+                    unset($alive[$key]);
+
+                    continue;
+                }
+
+                $alive[$key] = $refreshed;
+            }
         }
     }
 

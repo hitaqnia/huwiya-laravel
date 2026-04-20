@@ -31,13 +31,15 @@ findOrCreateFromHuwiya()
             │
             ├─ User found  → performHuwiyaUpdate()     [orchestration]
             │                  → getHuwiyaUpdateAttributes()
-            │                  → retry-on-conflict: resolveHuwiyaConflict()
+            │                  → preflight conflict scan → resolveHuwiyaConflict()
+            │                  → write (+ post-exception retry for races)
             │
             └─ Not found   → shouldAutoRegister()
                               ├─ false → HuwiyaUserNotFoundException
                               └─ true  → performHuwiyaCreation()  [orchestration]
                                            → getHuwiyaCreateAttributes()
-                                           → retry-on-conflict: resolveHuwiyaConflict()
+                                           → preflight conflict scan → resolveHuwiyaConflict()
+                                           → write (+ post-exception retry for races)
 ```
 
 For decoupled side effects — welcome emails, audit logs, analytics — subscribe to [events](05-events.md) rather than overriding the model.
@@ -117,9 +119,49 @@ public function getHuwiyaUpdateAttributes(TokenClaims $claims): array
 
 ### `resolveHuwiyaConflict(TokenClaims $claims, self $existingRow, string $column): void`
 
-When a create or update fails with a unique-constraint violation on a recyclable column (phone, email), the SDK locates the colliding row and hands off to this method. Your policy runs, then the SDK retries the write once.
+When a create or update would introduce data that collides with an existing row on a recyclable column (phone, email), the SDK calls this method before the write so your policy can clear the conflict.
+
+**How the SDK finds conflicts.** Before each create/update, a single `SELECT` scans every column returned by `getHuwiyaConflictColumns()` against the values on the claim, skipping the row being updated (if any). This happens in one indexed query — much cheaper than writing, catching the unique-constraint violation, and retrying.
+
+**Call shape.** The method is invoked **once per (row, column) collision**, in the order defined by `getHuwiyaConflictColumns()`:
+
+- One row colliding on both `phone` and `email` → the method is called twice, once per column, against that same row.
+- Two different rows, one colliding on `phone` and the other on `email` → the method is called twice, once per row.
+- The claim's value for a given recyclable column is `null`/empty → that column is skipped (a null value cannot violate a unique index).
+- The column is not part of the current `getHuwiya*Attributes` payload → that column is skipped (no write, no possible conflict).
+
+**Between dispatches.** The SDK re-reads the colliding row from the DB between calls:
+
+- If a previous dispatch **deleted** the row, subsequent dispatches for that row are skipped. A `delete()` policy collapses multi-column collisions into a single call.
+- If a previous dispatch **cleared the value** the next column would have collided on (as a side effect), that later dispatch is skipped too.
+- If the row is still present and still collides, the next (row, column) pair fires.
+
+**After dispatch, the write happens.** If a concurrent insert happened to sneak in between the preflight and the write (a race), the SDK falls back to the old post-exception path: dispatch once more, retry the write once, and surface `HuwiyaConflictException::unresolved` if it still collides.
 
 Default behavior: throw `HuwiyaConflictException` (converted to `409 Conflict` by the callback controller).
+
+```php
+// "Delete the stale row" — the simplest, most common policy.
+public function resolveHuwiyaConflict(
+    TokenClaims $claims,
+    self $existingRow,
+    string $column,
+): void {
+    $existingRow->delete();
+}
+```
+
+```php
+// "Null only the colliding column" — preserves the shell of the old account
+// for audit, works only if the column is nullable in your schema.
+public function resolveHuwiyaConflict(
+    TokenClaims $claims,
+    self $existingRow,
+    string $column,
+): void {
+    $existingRow->update([$column => null]);
+}
+```
 
 See [extensions](04-extensions.md) for the three common policies — delete, detach, and reject with a custom support flow.
 
