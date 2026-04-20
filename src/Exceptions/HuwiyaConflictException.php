@@ -35,11 +35,7 @@ class HuwiyaConflictException extends HuwiyaException
         string $conflictingColumn,
     ): self {
         return new self(
-            sprintf(
-                'The %s [%s] is already associated with another account.',
-                $conflictingColumn,
-                (string) $claims->{$conflictingColumn},
-            ),
+            sprintf('The %s is already associated with another account.', $conflictingColumn),
             $claims,
             $existingRow,
             $conflictingColumn,

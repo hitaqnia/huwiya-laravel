@@ -30,6 +30,58 @@ it('stores the intended URL in the bound session payload on redirect', function 
         ->and($payload['intended'] ?? null)->toBe('/dashboard');
 });
 
+it('drops off-host absolute URLs from the bound intended payload', function () {
+    Huwiya::redirect('web', 'https://evil.com/steal');
+
+    $payload = session('huwiya.oauth');
+
+    expect(array_key_exists('intended', $payload))->toBeFalse();
+});
+
+it('drops protocol-relative URLs from the bound intended payload', function () {
+    Huwiya::redirect('web', '//evil.com/steal');
+
+    $payload = session('huwiya.oauth');
+
+    expect(array_key_exists('intended', $payload))->toBeFalse();
+});
+
+it('keeps same-host absolute URLs in the bound intended payload', function () {
+    config(['app.url' => 'https://app.test']);
+
+    Huwiya::redirect('web', 'https://app.test/dashboard');
+
+    $payload = session('huwiya.oauth');
+
+    expect($payload['intended'] ?? null)->toBe('https://app.test/dashboard');
+});
+
+it('ignores a poisoned intended URL in the session at callback time', function () {
+    $jwt = createTestJwt([
+        'id' => (string) Str::ulid(),
+        'name' => 'John',
+    ]);
+
+    Http::fake([
+        'idp.example.com/oauth/token' => Http::response([
+            'access_token' => $jwt,
+            'token_type' => 'Bearer',
+        ]),
+    ]);
+
+    config(['huwiya.home' => '/safe-home']);
+
+    $response = $this->withSession([
+        'huwiya.oauth' => [
+            'state' => 'valid-state',
+            'guard' => 'web',
+            'intended' => 'https://evil.com/steal',
+        ],
+    ])->get('/huwiya/callback?code=auth-code&state=valid-state');
+
+    $response->assertRedirect('/safe-home');
+});
+
 it('omits the intended key when no intended URL is passed', function () {
     Huwiya::redirect('web');
 

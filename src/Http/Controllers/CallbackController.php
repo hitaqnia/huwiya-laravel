@@ -68,7 +68,7 @@ class CallbackController
         $state = $bound['state'];
         $guard = $bound['guard'];
         $intended = (isset($bound['intended']) && is_string($bound['intended']) && $bound['intended'] !== '')
-            ? $bound['intended']
+            ? Huwiya::sanitizeIntendedUrl($bound['intended'])
             : null;
 
         if (! hash_equals($state, (string) $request->input('state'))) {

@@ -86,7 +86,11 @@ class Huwiya
         ];
 
         if ($intendedUrl !== null && $intendedUrl !== '') {
-            $payload['intended'] = $intendedUrl;
+            $sanitized = static::sanitizeIntendedUrl($intendedUrl);
+
+            if ($sanitized !== null) {
+                $payload['intended'] = $sanitized;
+            }
         }
 
         session()->put('huwiya.oauth', $payload);
@@ -99,6 +103,47 @@ class Huwiya
         ]);
 
         return redirect(config('huwiya.url').'/oauth/authorize?'.$query);
+    }
+
+    /**
+     * Reduce a caller-supplied post-login URL to a safe same-origin path.
+     *
+     * Prevents open-redirect bugs when the app passes user-controllable input
+     * (query strings, referer headers) into `Huwiya::redirect()`. Off-host
+     * absolute URLs, protocol-relative URLs, and backslash smuggling are
+     * collapsed to null so the callback falls back to `config('huwiya.home')`.
+     */
+    public static function sanitizeIntendedUrl(string $url): ?string
+    {
+        if ($url === '' || strlen($url) > 2048) {
+            return null;
+        }
+
+        // Reject protocol-relative (`//evil.com`) and backslash-smuggled URLs
+        // (`/\evil.com`) that some routers treat as authority components.
+        if (str_starts_with($url, '//') || str_starts_with($url, '/\\')) {
+            return null;
+        }
+
+        // Relative paths starting with `/` (but not `//`) are always same-origin.
+        if (str_starts_with($url, '/')) {
+            return $url;
+        }
+
+        // Absolute URLs are allowed only if the host matches APP_URL.
+        $parts = parse_url($url);
+
+        if ($parts === false || ! isset($parts['host'])) {
+            return null;
+        }
+
+        $appHost = parse_url((string) config('app.url'), PHP_URL_HOST);
+
+        if (! is_string($appHost) || $appHost === '' || strcasecmp($parts['host'], $appHost) !== 0) {
+            return null;
+        }
+
+        return $url;
     }
 
     /**
@@ -439,7 +484,7 @@ class Huwiya
             return null;
         }
 
-        $response = Http::timeout(10)->get($uri);
+        $response = Http::timeout((int) config('huwiya.http_timeout', 10))->get($uri);
 
         if (! $response->successful()) {
             static::log()?->warning('Huwiya: JWKS endpoint returned non-successful status.', [

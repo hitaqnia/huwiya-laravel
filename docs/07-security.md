@@ -10,6 +10,7 @@ The SDK is designed to be secure by default.
 - **HTTP timeouts.** Outbound calls to the IdP (token exchange, JWKS fetch) are bounded by `config('huwiya.http_timeout')`. A hung IdP cannot tie up a worker indefinitely.
 - **Rate limiting.** The `/huwiya/callback` route is limited to 30 requests per minute per IP by default.
 - **Session fixation** is prevented by regenerating the session ID after a successful login.
+- **Open-redirect protection.** The optional `intendedUrl` passed to `Huwiya::redirect()` is sanitized: relative paths are accepted, absolute URLs are accepted only when the host matches `APP_URL`, and protocol-relative URLs (`//evil.com`) are rejected. Off-host values fall back to `config('huwiya.home')`.
 - **Strict base64url decoding** is applied to every JWT segment — malformed inputs are rejected early.
 - **Secrets are not logged.** Access tokens, client secrets, and response bodies are never written to the log channel. Only metadata (HTTP status, exception class, rejection code) is recorded.
 
