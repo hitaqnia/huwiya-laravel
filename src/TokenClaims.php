@@ -14,6 +14,8 @@ class TokenClaims
     public function __construct(
         public readonly string $id,
         public readonly string $name,
+        public readonly string $phone,
+        public readonly string $email,
         public readonly string $locale,
         public readonly string $zoneinfo,
         public readonly string $theme,
@@ -33,7 +35,7 @@ class TokenClaims
     {
         $missing = [];
 
-        foreach (['id', 'name', 'locale', 'zoneinfo', 'theme'] as $required) {
+        foreach (['id', 'name', 'phone', 'email', 'locale', 'zoneinfo', 'theme'] as $required) {
             if (! array_key_exists($required, $claims) || $claims[$required] === null || $claims[$required] === '') {
                 $missing[] = $required;
             }
@@ -56,6 +58,8 @@ class TokenClaims
         return new self(
             id: $id,
             name: (string) $claims['name'],
+            phone: (string) $claims['phone'],
+            email: (string) $claims['email'],
             locale: (string) $claims['locale'],
             zoneinfo: (string) $claims['zoneinfo'],
             theme: (string) $claims['theme'],
