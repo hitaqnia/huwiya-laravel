@@ -209,4 +209,43 @@ return [
 
     'log_channel' => env('HUWIYA_LOG_CHANNEL'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | HTTP Timeout
+    |--------------------------------------------------------------------------
+    |
+    | Timeout in seconds for outbound HTTP calls from the SDK (token exchange,
+    | JWKS fetch). A hung IdP shouldn't be able to tie up a worker indefinitely.
+    |
+    */
+
+    'http_timeout' => (int) env('HUWIYA_HTTP_TIMEOUT', 10),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Post-Login Home URL
+    |--------------------------------------------------------------------------
+    |
+    | The fallback URL the callback redirects to after a successful login when
+    | no `intended` URL was stored. Individual redirects may override per-request
+    | by passing an intended URL to `Huwiya::redirect()`.
+    |
+    */
+
+    'home' => env('HUWIYA_HOME', '/'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Callback Middleware
+    |--------------------------------------------------------------------------
+    |
+    | Middleware stack for the `/huwiya/callback` route. Defaults include a
+    | rate limiter named `huwiya-callback` registered by the service provider
+    | (30 requests/minute per IP). Override if you need different limits or
+    | additional middleware.
+    |
+    */
+
+    'callback_middleware' => ['web', 'throttle:huwiya-callback'],
+
 ];

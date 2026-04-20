@@ -16,29 +16,21 @@ class EnsureFrontendRequestsAreStateful
     /**
      * Handle the incoming request.
      *
+     * Note: downstream apps must configure `session.http_only = true` and
+     * `session.same_site = 'lax'` in `config/session.php` themselves. This
+     * middleware no longer mutates global config — doing so persisted across
+     * requests under long-running workers (Octane) and was a footgun.
+     *
      * @param  Request  $request
      * @param  callable  $next
      */
     public function handle($request, $next)
     {
-        $this->configureSecureCookieSessions();
-
         return (new Pipeline(app()))->send($request)->through(
             static::fromFrontend($request) ? $this->frontendMiddleware() : []
         )->then(function ($request) use ($next) {
             return $next($request);
         });
-    }
-
-    /**
-     * Configure secure cookie sessions.
-     */
-    protected function configureSecureCookieSessions(): void
-    {
-        config([
-            'session.http_only' => true,
-            'session.same_site' => 'lax',
-        ]);
     }
 
     /**

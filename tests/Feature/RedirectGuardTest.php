@@ -14,6 +14,9 @@ beforeEach(function () {
         'huwiya.client_id' => 'test-client-id',
         'huwiya.client_secret' => 'test-client-secret',
         'huwiya.redirect_uri' => 'https://app.test/huwiya/callback',
+        'huwiya.verify_signature' => false,
+        'huwiya.validate_issuer' => false,
+        'huwiya.validate_audience' => false,
         'auth.guards.web' => [
             'driver' => 'huwiya-web',
             'provider' => 'users',
@@ -115,10 +118,10 @@ it('refuses to log in when the bound guard has been removed entirely', function 
         ->assertStatus(500);
 });
 
-it('rejects malformed session payloads', function () {
+it('rejects malformed session payloads with a 400', function () {
     $this->withSession(['huwiya.oauth' => ['state' => 'valid-state']])
         ->get('/huwiya/callback?code=auth-code&state=valid-state')
-        ->assertStatus(500);
+        ->assertStatus(400);
 });
 
 it('consumes the session payload so it cannot be replayed', function () {
@@ -142,7 +145,7 @@ it('consumes the session payload so it cannot be replayed', function () {
     // Re-seeding the session is required because withSession starts a new session
     // for the next request. But the flash in the *same* session is what matters —
     // the first call's pull() should have cleared it. Prove by making a second
-    // callback attempt without seeding: it fails on the missing payload.
+    // callback attempt without seeding: it fails on the missing payload with 400.
     $this->get('/huwiya/callback?code=auth-code&state=valid-state')
-        ->assertStatus(500);
+        ->assertStatus(400);
 });

@@ -11,6 +11,7 @@ The official Laravel SDK for the [Huwiya](https://huwiya.id) Identity Provider. 
 
 ## Table of Contents
 
+- [Quick Start](#quick-start)
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Configuration](#configuration)
@@ -32,14 +33,63 @@ The official Laravel SDK for the [Huwiya](https://huwiya.id) Identity Provider. 
   - [Multiple Guards](#multiple-guards)
   - [Authorization Denial Handler](#authorization-denial-handler)
   - [Stateful Middleware](#stateful-middleware)
+- [Invitations](#invitations)
 - [Events](#events)
 - [Testing Support](#testing-support)
-- [Exceptions](#exceptions)
+- [Errors](#errors)
 - [Logging](#logging)
 - [Security](#security)
 - [Configuration Reference](#configuration-reference)
 - [Contributing](#contributing)
 - [License](#license)
+
+## Quick Start
+
+```bash
+composer require hitaqnia/huwiya-laravel
+
+# Publish config and the users migration stub
+php artisan vendor:publish --tag=huwiya-config
+php artisan vendor:publish --tag=huwiya-migrations
+
+# Edit the generated migration if you want to rename columns or skip fields,
+# then run it:
+php artisan migrate
+```
+
+Add credentials to `.env`:
+
+```dotenv
+HUWIYA_PROJECT_ID=your-project-id
+HUWIYA_CLIENT_ID=your-client-id
+HUWIYA_CLIENT_SECRET=your-client-secret
+```
+
+Add the trait to your `User` model and switch your guard to `huwiya-web`:
+
+```php
+// app/Models/User.php
+use Huwiya\InteractsWithHuwiya;
+
+class User extends Authenticatable { use InteractsWithHuwiya; }
+
+// config/auth.php
+'guards' => [
+    'web' => ['driver' => 'huwiya-web', 'provider' => 'users'],
+],
+```
+
+Wire a login route that starts the OAuth flow:
+
+```php
+use Huwiya\Facades\Huwiya;
+
+Route::get('/login', fn () => Huwiya::redirect('web'))->name('login');
+```
+
+That's the whole setup. The SDK auto-registers `/huwiya/callback` behind a rate limiter (30 req/min/IP by default).
+
+> **Invite-only?** Swap `InteractsWithHuwiya` for `InteractsWithHuwiyaAsInviteOnly` on your User model. Pre-seed rows with `phone` (no `huwiya_id`); the SDK claims them on first login. See [Invitations](#invitations).
 
 ## Requirements
 
@@ -96,9 +146,19 @@ Schema::create('users', function (Blueprint $table) {
 });
 ```
 
-> **Identity lives on the IdP.** The `huwiya_id` column is the only attribute the package requires on your users table. Contact details such as `phone` and `email` are **not** part of the token claims, and the IdP does **not** expose them to third-party applications at all — they remain visible only to the user themselves. Design your app around the `huwiya_id` as the sole identifier, and collect any additional details you need directly from the user. Keeping your users table minimal avoids drift between your app and the identity source of truth.
+> **Identity lives on the IdP.** The IdP issues the `huwiya_id` (ULID) as the stable identifier and includes `phone`, `email`, and `name` as claims in every token. Preference claims (`locale`, `zoneinfo`, `theme`) are optional and default to empty strings when absent. The published migration creates columns for all of these; override `$huwiyaFieldsMap` on your User model to rename or disable any field. See [User Mapping](#user-mapping).
 
-The macro defaults to a column named `huwiya_id`. You may pass a custom name — `$table->huwiyaIdentifier('sso_id')` — as long as it matches the column returned by `getHuwiyaIdentifierColumn()` on your model. The unique index is required: the package relies on it to prevent duplicate user rows under concurrent first-login requests.
+The macro defaults to a column named `huwiya_id` (nullable unique ULID — nullable so pre-seeded invitation rows can live in the same table before they're claimed). You may pass a custom name — `$table->huwiyaIdentifier('sso_id')` — as long as it matches the column returned by `getHuwiyaIdentifierColumn()` on your model.
+
+For a full user schema you'll typically use the higher-level `huwiyaFields()` macro, which reads your model's `$huwiyaFieldsMap` and creates exactly the columns you've declared:
+
+```php
+Schema::create('users', function (Blueprint $table) {
+    $table->id();
+    $table->huwiyaFields(User::huwiyaFieldsSchema());
+    $table->timestamps();
+});
+```
 
 Next, add the `InteractsWithHuwiya` trait to your `User` model:
 
@@ -436,6 +496,36 @@ You may swap the cookie and CSRF middleware used by `EnsureFrontendRequestsAreSt
 ],
 ```
 
+> **Session cookie hardening.** Earlier versions of this middleware mutated `session.http_only` and `session.same_site` at runtime. That was a footgun under long-running workers (Octane) and has been removed. Set these values in your `config/session.php` directly:
+>
+> ```php
+> // config/session.php
+> 'http_only' => true,
+> 'same_site' => 'lax',
+> ```
+
+## Invitations
+
+When invitations are enabled, the SDK falls back to a second lookup when a token's `huwiya_id` doesn't match any local user: it looks for a row with matching `phone` **and** a NULL `huwiya_id`. If found, that row is "claimed" — its `huwiya_id` is stamped from the token, other fields are synced, and the user logs in.
+
+The common install is invite-only: pre-seed users by phone, no open auto-registration. The package ships a convenience trait that wires the two relevant switches:
+
+```php
+use Huwiya\InteractsWithHuwiyaAsInviteOnly;
+
+class User extends Authenticatable
+{
+    use InteractsWithHuwiyaAsInviteOnly;
+}
+
+// Pre-seed rows:
+User::create(['phone' => '+9647700000001', 'name' => 'Pending Invitee']);
+```
+
+Hybrid setups (both invitations and auto-registration on) are supported — override `invitationsEnabled()` to return `true` on your regular `InteractsWithHuwiya` model while leaving `shouldAutoRegister()` at its `true` default.
+
+Two lifecycle events fire around a claim: `HuwiyaInvitationClaiming` (before) and `HuwiyaInvitationClaimed` (after). Use them to send welcome emails, mark admin-side workflows complete, or emit audit events.
+
 ## Events
 
 The SDK dispatches lifecycle events during user resolution, creation, and update. Events are fired from inside the `InteractsWithHuwiya` trait, so both the web (OAuth callback) and API (JWT bearer) flows fire them automatically.
@@ -526,24 +616,61 @@ The package's own test suite can be executed with:
 composer test
 ```
 
-## Exceptions
+## Errors
 
-All exceptions extend `Huwiya\Exceptions\HuwiyaException`, which in turn extends `\RuntimeException`. You may catch either to handle all SDK errors, or target specific failure modes individually.
+The SDK uses two error mechanisms, each suited to a different kind of failure:
 
-| Exception                        | Thrown when                                                                                        |
-| -------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `InvalidGuardException`          | `Huwiya::redirect()` received an empty, unknown, or non-`huwiya-web` guard name.                   |
-| `InvalidStateException`          | The OAuth callback session payload is missing or malformed, or the returned `state` does not match. |
-| `TokenExchangeException`         | The token endpoint returned a non-2xx response or a body without `access_token`.                   |
-| `InvalidJwtFormatException`      | The JWT is malformed (wrong segment count, invalid base64, invalid JSON, missing `kid` or `alg`).  |
-| `InvalidTokenClaimsException`    | The JWT payload is missing a required claim (`id`, `name`, `locale`, `zoneinfo`, `theme`, `scopes`) or `id` is not a valid ULID. |
-| `JwksFetchException`             | The JWKS endpoint is unreachable, returned a non-2xx response, or returned no `keys` array.        |
-| `UnknownKidException`            | No JWKS key matches the JWT's `kid`, even after a cache refresh.                                   |
-| `UnsupportedKeyTypeException`    | A matched JWKS key has a `kty` other than `RSA`.                                                   |
-| `AuthConfigurationException`     | `auth.providers.{provider}.model` is missing, or the model does not use `InteractsWithHuwiya`.     |
-| `HuwiyaUserNotFoundException`    | Auto-registration is disabled and no local user matches the incoming `sub`.                        |
+1. **Token rejection uses the Result pattern** — an HTTP-received, third-party-signed blob being unacceptable (bad signature, wrong issuer, expired, malformed) is a routine domain outcome, not a programmer error. `Huwiya::decodeAndVerifyToken()` returns a `Huwiya\Support\Result<TokenClaims>`:
 
-Guard-level authentication failures — expired tokens, invalid signatures, mismatched issuer or audience — do **not** throw. The guards return `null`, and Laravel's built-in `auth:*` middleware responds with `401 Unauthorized` as usual.
+    ```php
+    use Huwiya\Huwiya;
+    use Huwiya\Support\TokenRejection;
+
+    $result = Huwiya::decodeAndVerifyToken($jwt);
+
+    if ($result->isSuccess()) {
+        $claims = $result->getData();
+        // ...
+    } else {
+        match ($result->getError()->getCode()) {
+            TokenRejection::EXPIRED => /* 401, refresh */,
+            TokenRejection::BAD_SIGNATURE,
+            TokenRejection::BAD_ISSUER,
+            TokenRejection::BAD_AUDIENCE => /* 401, reject */,
+            TokenRejection::MALFORMED,
+            TokenRejection::MISSING_CLAIMS => /* 400, bad input */,
+            TokenRejection::JWKS_UNAVAILABLE,
+            TokenRejection::UNKNOWN_KID,
+            TokenRejection::UNSUPPORTED_KEY_TYPE => /* 502, IdP issue */,
+        };
+    }
+    ```
+
+    Callers that don't care about the reason (most notably guards) can use the convenience wrapper `Huwiya::tryDecodeAndVerifyToken()`, which returns `TokenClaims` on success or `null` on any failure. This is what `huwiya-api` calls internally, so `auth:api` middleware returns `401 Unauthorized` as usual.
+
+2. **Exceptions are reserved for programmer and configuration errors** — things that should never happen in a working app and should fail loudly:
+
+    | Exception                      | Thrown when                                                                                        |
+    | ------------------------------ | -------------------------------------------------------------------------------------------------- |
+    | `InvalidGuardException`        | `Huwiya::redirect()` received an empty, unknown, or non-`huwiya-web` guard name.                   |
+    | `AuthConfigurationException`   | `auth.providers.{provider}.model` is missing, or the model does not use `InteractsWithHuwiya`.     |
+    | `InvalidStateException`        | The OAuth callback session payload is missing/malformed, the returned `state` does not match, or the `code` parameter is absent. Caught by the callback controller and converted to `400`. |
+    | `TokenExchangeException`       | The token endpoint timed out, returned a non-2xx response, or sent a body without `access_token`. Caught by the callback controller and converted to `502`. |
+    | `HuwiyaUserNotFoundException`  | Auto-registration is disabled and no local user matches the incoming subject. Caught by the callback controller and converted to `403`. |
+
+    All exceptions extend `Huwiya\Exceptions\HuwiyaException`, which in turn extends `\RuntimeException`.
+
+### OAuth callback HTTP status codes
+
+The callback route translates each failure class into a generic HTTP status — no stack traces, no internal detail leaks to the browser:
+
+- `400 Bad Request` — invalid/missing state, missing code, malformed session payload
+- `401 Unauthorized` — token failed signature, issuer, audience, or expiry checks
+- `403 Forbidden` — auto-registration is off and the authenticated user has no matching local row
+- `502 Bad Gateway` — token endpoint unreachable, non-2xx, or returned an unusable token
+- `429 Too Many Requests` — rate limiter exceeded (default: 30 callbacks per minute per IP)
+
+Override the rate limit via `config('huwiya.callback_middleware')` — see [Configuration Reference](#configuration-reference).
 
 ## Logging
 
@@ -590,6 +717,9 @@ All settings are defined in `config/huwiya.php`.
 | `validate_issuer`     | `HUWIYA_VALIDATE_ISSUER`    | `true`                                        | Require the `iss` claim to match `url`.                                            |
 | `validate_audience`   | `HUWIYA_VALIDATE_AUDIENCE`  | `true`                                        | Require the `aud` claim to match `project_id`.                                     |
 | `log_channel`         | `HUWIYA_LOG_CHANNEL`        | `null`                                        | Log channel for diagnostics. Leave unset to disable logging.                       |
+| `http_timeout`        | `HUWIYA_HTTP_TIMEOUT`       | `10`                                          | Timeout in seconds for outbound HTTP calls (token exchange, JWKS fetch).           |
+| `home`                | `HUWIYA_HOME`               | `/`                                           | Fallback post-login URL when no intended URL was passed to `Huwiya::redirect()`.   |
+| `callback_middleware` | *(not env-driven)*          | `['web', 'throttle:huwiya-callback']`         | Middleware stack for `/huwiya/callback`. Default rate limit is 30/min/IP.          |
 
 ## Contributing
 

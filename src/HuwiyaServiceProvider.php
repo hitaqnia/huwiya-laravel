@@ -3,10 +3,11 @@
 namespace Huwiya;
 
 use Huwiya\Support\AuthorizationDeniedCallback;
-use Huwiya\Support\HuwiyaManager;
 use Illuminate\Auth\RequestGuard;
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 
@@ -17,11 +18,12 @@ class HuwiyaServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/huwiya.php', 'huwiya');
 
         $this->app->scoped(AuthorizationDeniedCallback::class);
-        $this->app->singleton(HuwiyaManager::class);
+        $this->app->singleton(Huwiya::class);
     }
 
     public function boot(): void
     {
+        $this->registerRateLimiter();
         $this->defineRoutes();
         $this->configureGuard();
         $this->registerBlueprintMacros();
@@ -37,6 +39,11 @@ class HuwiyaServiceProvider extends ServiceProvider
                 ),
             ], 'huwiya-migrations');
         }
+    }
+
+    protected function registerRateLimiter(): void
+    {
+        RateLimiter::for('huwiya-callback', fn ($request) => Limit::perMinute(30)->by($request->ip()));
     }
 
     protected function registerBlueprintMacros(): void
@@ -82,7 +89,9 @@ class HuwiyaServiceProvider extends ServiceProvider
             return;
         }
 
-        Route::middleware('web')->group(function () {
+        $middleware = config('huwiya.callback_middleware', ['web', 'throttle:huwiya-callback']);
+
+        Route::middleware($middleware)->group(function () {
             Route::get('/huwiya/callback', Http\Controllers\CallbackController::class)->name('huwiya.callback');
         });
     }

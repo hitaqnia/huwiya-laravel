@@ -10,6 +10,12 @@ beforeEach(function () {
         'huwiya.client_id' => 'test-client-id',
         'huwiya.client_secret' => 'test-client-secret',
         'huwiya.redirect_uri' => 'https://app.test/huwiya/callback',
+        // The callback now verifies tokens end-to-end. These tests focus on the
+        // OAuth transport, not signature/claim validation (covered in JwtSecurityTest),
+        // so signature verification and issuer/audience checks are disabled here.
+        'huwiya.verify_signature' => false,
+        'huwiya.validate_issuer' => false,
+        'huwiya.validate_audience' => false,
         'auth.guards.web' => [
             'driver' => 'huwiya-web',
             'provider' => 'users',
@@ -86,15 +92,21 @@ it('updates an existing user on callback', function () {
     expect($user->fresh()->name)->toBe('Updated Name');
 });
 
-it('rejects callback with invalid state', function () {
+it('rejects callback with invalid state with a 400', function () {
     $this->withSession(['huwiya.oauth' => ['state' => 'correct-state', 'guard' => 'web']])
         ->get('/huwiya/callback?code=auth-code&state=wrong-state')
-        ->assertStatus(500);
+        ->assertStatus(400);
 });
 
-it('rejects callback with missing state', function () {
+it('rejects callback with missing state with a 400', function () {
     $this->get('/huwiya/callback?code=auth-code&state=any')
-        ->assertStatus(500);
+        ->assertStatus(400);
+});
+
+it('rejects callback with missing code parameter with a 400', function () {
+    $this->withSession(['huwiya.oauth' => ['state' => 'valid-state', 'guard' => 'web']])
+        ->get('/huwiya/callback?state=valid-state')
+        ->assertStatus(400);
 });
 
 it('handles authorization denial from IdP', function () {

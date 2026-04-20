@@ -13,6 +13,7 @@ use Huwiya\Events\HuwiyaUserUpdated;
 use Huwiya\Events\HuwiyaUserUpdating;
 use Huwiya\Exceptions\HuwiyaUserNotFoundException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\UniqueConstraintViolationException;
 
 trait InteractsWithHuwiya
 {
@@ -310,8 +311,28 @@ trait InteractsWithHuwiya
 
     /**
      * Find or create a user from Huwiya token claims.
+     *
+     * Under concurrent first-logins for an invited user (two requests racing
+     * to claim the same phone-only row), a `UniqueConstraintViolationException`
+     * can escape from the create/update path. We catch it once and re-resolve —
+     * the row the loser tried to claim is now owned by the winner's
+     * `huwiya_id`, so the second lookup returns it cleanly.
+     *
+     * @throws HuwiyaUserNotFoundException
      */
     public static function findOrCreateFromHuwiya(TokenClaims $claims, ?string $guard = null): static
+    {
+        try {
+            return static::runHuwiyaResolution($claims, $guard);
+        } catch (UniqueConstraintViolationException) {
+            return static::runHuwiyaResolution($claims, $guard);
+        }
+    }
+
+    /**
+     * @throws HuwiyaUserNotFoundException
+     */
+    protected static function runHuwiyaResolution(TokenClaims $claims, ?string $guard): static
     {
         event(new HuwiyaAuthenticating($claims, $guard));
 

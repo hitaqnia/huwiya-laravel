@@ -16,9 +16,9 @@ class TokenClaims
         public readonly string $name,
         public readonly string $phone,
         public readonly string $email,
-        public readonly string $locale,
-        public readonly string $zoneinfo,
-        public readonly string $theme,
+        public readonly string $locale = '',
+        public readonly string $zoneinfo = '',
+        public readonly string $theme = '',
         public readonly array $scopes = [],
         public readonly ?string $issuer = null,
         public readonly ?int $issuedAt = null,
@@ -35,7 +35,9 @@ class TokenClaims
     {
         $missing = [];
 
-        foreach (['id', 'name', 'phone', 'email', 'locale', 'zoneinfo', 'theme'] as $required) {
+        // Identity fields required — SDK contract. Preference fields (locale,
+        // zoneinfo, theme) are optional; absent values default to empty string.
+        foreach (['id', 'name', 'phone', 'email'] as $required) {
             if (! array_key_exists($required, $claims) || $claims[$required] === null || $claims[$required] === '') {
                 $missing[] = $required;
             }
@@ -60,9 +62,9 @@ class TokenClaims
             name: (string) $claims['name'],
             phone: (string) $claims['phone'],
             email: (string) $claims['email'],
-            locale: (string) $claims['locale'],
-            zoneinfo: (string) $claims['zoneinfo'],
-            theme: (string) $claims['theme'],
+            locale: isset($claims['locale']) ? (string) $claims['locale'] : '',
+            zoneinfo: isset($claims['zoneinfo']) ? (string) $claims['zoneinfo'] : '',
+            theme: isset($claims['theme']) ? (string) $claims['theme'] : '',
             scopes: array_values(array_map('strval', $claims['scopes'])),
             issuer: isset($claims['iss']) ? (string) $claims['iss'] : null,
             issuedAt: isset($claims['iat']) ? (int) $claims['iat'] : null,

@@ -91,15 +91,29 @@ it('throws on invalid JWT format', function () {
     TokenClaims::fromJwt('not-a-jwt');
 })->throws(RuntimeException::class, 'Invalid JWT token format.');
 
-it('throws InvalidTokenClaimsException when required claims are missing', function () {
+it('throws InvalidTokenClaimsException when required identity claims are missing', function () {
     TokenClaims::fromArray([
         'id' => validUlid(),
-        // everything else missing
+        // everything else missing — identity core required, preference claims optional
     ]);
 })->throws(
     \Huwiya\Exceptions\InvalidTokenClaimsException::class,
-    'missing required keys: name, phone, email, locale, zoneinfo, theme, scopes',
+    'missing required keys: name, phone, email, scopes',
 );
+
+it('defaults preference claims (locale, zoneinfo, theme) to empty when omitted', function () {
+    $claims = TokenClaims::fromArray([
+        'id' => validUlid(),
+        'name' => 'Jane',
+        'phone' => '+964770',
+        'email' => 'jane@example.com',
+        'scopes' => [],
+    ]);
+
+    expect($claims->locale)->toBe('')
+        ->and($claims->zoneinfo)->toBe('')
+        ->and($claims->theme)->toBe('');
+});
 
 it('throws InvalidTokenClaimsException when a required claim is empty', function () {
     TokenClaims::fromArray(validClaimsArray(['name' => '']));

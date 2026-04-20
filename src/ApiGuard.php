@@ -17,6 +17,8 @@ class ApiGuard
      *
      * For the API driver, authentication is stateless. The JWT bearer token
      * is decoded, verified, and the user is resolved from the provider model.
+     *
+     * @throws AuthConfigurationException
      */
     public function __invoke(Request $request): mixed
     {
@@ -26,11 +28,20 @@ class ApiGuard
             return null;
         }
 
-        $claims = Huwiya::decodeAndVerifyToken($token);
+        $result = Huwiya::decodeAndVerifyToken($token);
 
-        if ($claims === null) {
+        if ($result->isFailure()) {
+            $error = $result->getError();
+
+            Huwiya::log()?->info('Huwiya API: token rejected.', [
+                'code' => $error?->getCode(),
+                'reason' => $error?->getMessage(),
+            ]);
+
             return null;
         }
+
+        $claims = $result->getData();
 
         $model = config("auth.providers.{$this->provider}.model");
 

@@ -5,10 +5,14 @@ namespace Huwiya;
 use Huwiya\Exceptions\AuthConfigurationException;
 use Huwiya\Exceptions\InvalidGuardException;
 use Huwiya\Exceptions\InvalidJwtFormatException;
+use Huwiya\Exceptions\InvalidTokenClaimsException;
 use Huwiya\Exceptions\JwksFetchException;
 use Huwiya\Exceptions\UnknownKidException;
 use Huwiya\Exceptions\UnsupportedKeyTypeException;
 use Huwiya\Support\AuthorizationDeniedCallback;
+use Huwiya\Support\Error;
+use Huwiya\Support\Result;
+use Huwiya\Support\TokenRejection;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Cache;
@@ -19,6 +23,16 @@ use Psr\Log\LoggerInterface;
 
 class Huwiya
 {
+    /**
+     * Cached log channel instance. Cleared via `flush()`.
+     */
+    protected static ?LoggerInterface $cachedLogger = null;
+
+    /**
+     * Sentinel used to mark the cached logger as explicitly "no channel configured".
+     */
+    protected static bool $cachedLoggerResolved = false;
+
     /**
      * Register the callback used when the user denies the authorization request.
      *
@@ -53,19 +67,29 @@ class Huwiya
      * Initiate an OAuth authorization redirect bound to a specific web guard.
      *
      * The guard is validated against the auth config and stored atomically
-     * alongside the OAuth state in a single session entry, so the callback
-     * resolves the guard from the bound session payload rather than config.
+     * alongside the OAuth state (and optional post-login URL) in a single
+     * session entry, so the callback resolves everything from the bound
+     * session payload rather than config.
+     *
+     * @throws InvalidGuardException
+     * @throws AuthConfigurationException
      */
-    public static function redirect(string $guard): RedirectResponse
+    public static function redirect(string $guard, ?string $intendedUrl = null): RedirectResponse
     {
         static::assertGuardIsHuwiyaWeb($guard);
 
         $state = Str::random(40);
 
-        session()->put('huwiya.oauth', [
+        $payload = [
             'state' => $state,
             'guard' => $guard,
-        ]);
+        ];
+
+        if ($intendedUrl !== null && $intendedUrl !== '') {
+            $payload['intended'] = $intendedUrl;
+        }
+
+        session()->put('huwiya.oauth', $payload);
 
         $query = http_build_query([
             'client_id' => config('huwiya.client_id'),
@@ -114,16 +138,24 @@ class Huwiya
     }
 
     /**
-     * Decode and verify a JWT token, returning claims or null on failure.
+     * Decode and verify a JWT token.
+     *
+     * Returns a Result wrapping the TokenClaims on success, or a Result::failure
+     * carrying an Error with a TokenRejection code on failure. Failure modes
+     * (malformed, bad signature, expired, bad issuer/audience, missing claims,
+     * JWKS unavailable) are all routine domain outcomes for a token received
+     * over HTTP, so they're expressed as Result rather than exceptions.
+     *
+     * @return Result<TokenClaims>
      */
-    public static function decodeAndVerifyToken(string $token): ?TokenClaims
+    public static function decodeAndVerifyToken(string $token): Result
     {
         $parts = explode('.', $token);
 
         if (count($parts) !== 3) {
             static::log()?->warning('Huwiya: JWT rejected — wrong segment count.', ['category' => 'format']);
 
-            return null;
+            return Result::failure(Error::make(TokenRejection::MALFORMED, 'JWT must have three segments.'));
         }
 
         $payload = static::base64UrlDecode($parts[1]);
@@ -131,7 +163,7 @@ class Huwiya
         if ($payload === false) {
             static::log()?->warning('Huwiya: JWT rejected — payload not valid base64url.', ['category' => 'format']);
 
-            return null;
+            return Result::failure(Error::make(TokenRejection::MALFORMED, 'JWT payload is not valid base64url.'));
         }
 
         $decoded = json_decode($payload, true);
@@ -139,7 +171,7 @@ class Huwiya
         if (! is_array($decoded)) {
             static::log()?->warning('Huwiya: JWT rejected — payload not valid JSON.', ['category' => 'format']);
 
-            return null;
+            return Result::failure(Error::make(TokenRejection::MALFORMED, 'JWT payload is not valid JSON.'));
         }
 
         if (config('huwiya.verify_signature', true)) {
@@ -147,37 +179,47 @@ class Huwiya
                 if (! static::verifySignature($token)) {
                     static::log()?->warning('Huwiya: JWT rejected — signature verification failed.', ['category' => 'signature']);
 
-                    return null;
+                    return Result::failure(Error::make(TokenRejection::BAD_SIGNATURE, 'JWT signature verification failed.'));
                 }
-            } catch (InvalidJwtFormatException|JwksFetchException|UnknownKidException|UnsupportedKeyTypeException $e) {
-                static::log()?->warning('Huwiya: JWT rejected — '.$e->getMessage(), [
-                    'category' => 'signature',
-                    'exception' => $e::class,
-                ]);
+            } catch (InvalidJwtFormatException $e) {
+                static::log()?->warning('Huwiya: JWT rejected — '.$e->getMessage(), ['category' => 'signature']);
 
-                return null;
+                return Result::failure(Error::make(TokenRejection::MALFORMED, $e->getMessage()));
+            } catch (JwksFetchException $e) {
+                static::log()?->warning('Huwiya: JWT rejected — '.$e->getMessage(), ['category' => 'signature']);
+
+                return Result::failure(Error::make(TokenRejection::JWKS_UNAVAILABLE, $e->getMessage()));
+            } catch (UnknownKidException $e) {
+                static::log()?->warning('Huwiya: JWT rejected — '.$e->getMessage(), ['category' => 'signature']);
+
+                return Result::failure(Error::make(TokenRejection::UNKNOWN_KID, $e->getMessage()));
+            } catch (UnsupportedKeyTypeException $e) {
+                static::log()?->warning('Huwiya: JWT rejected — '.$e->getMessage(), ['category' => 'signature']);
+
+                return Result::failure(Error::make(TokenRejection::UNSUPPORTED_KEY_TYPE, $e->getMessage()));
             }
         }
 
         try {
             $claims = TokenClaims::fromArray($decoded);
-        } catch (\Huwiya\Exceptions\InvalidTokenClaimsException $e) {
+        } catch (InvalidTokenClaimsException $e) {
             static::log()?->warning('Huwiya: JWT rejected — '.$e->getMessage(), ['category' => 'claims']);
 
-            return null;
+            return Result::failure(Error::make(TokenRejection::MISSING_CLAIMS, $e->getMessage()));
         }
 
-        if (! static::isTokenValid($claims)) {
-            static::log()?->warning('Huwiya: JWT rejected — claim validation failed (expired, issuer, or audience).', [
-                'category' => 'claims',
-                'issuer' => $claims->issuer,
-                'audience' => $claims->audience,
-            ]);
+        return static::validateClaims($claims);
+    }
 
-            return null;
-        }
+    /**
+     * Null-returning convenience wrapper around decodeAndVerifyToken for callers
+     * (like Laravel guards) that treat any rejection the same way.
+     */
+    public static function tryDecodeAndVerifyToken(string $token): ?TokenClaims
+    {
+        $result = static::decodeAndVerifyToken($token);
 
-        return $claims;
+        return $result->isSuccess() ? $result->getData() : null;
     }
 
     /**
@@ -229,31 +271,60 @@ class Huwiya
     }
 
     /**
-     * Check if the token claims are valid (expiration, issuer, audience).
+     * Validate claim-level invariants (expiry, issuer, audience).
+     *
+     * @return Result<TokenClaims>
      */
-    protected static function isTokenValid(TokenClaims $claims): bool
+    protected static function validateClaims(TokenClaims $claims): Result
     {
         if ($claims->isExpired((int) config('huwiya.leeway', 60))) {
-            return false;
+            static::log()?->warning('Huwiya: JWT rejected — token expired.', ['category' => 'claims']);
+
+            return Result::failure(Error::make(TokenRejection::EXPIRED, 'Token has expired.'));
         }
 
-        if (config('huwiya.validate_issuer', true) && $claims->issuer !== config('huwiya.url')) {
-            return false;
+        if (config('huwiya.validate_issuer', true)) {
+            $expected = config('huwiya.url');
+
+            if ($claims->issuer === null || $claims->issuer !== $expected) {
+                static::log()?->warning('Huwiya: JWT rejected — issuer mismatch.', [
+                    'category' => 'claims',
+                    'expected' => $expected,
+                    'got' => $claims->issuer,
+                ]);
+
+                return Result::failure(Error::make(TokenRejection::BAD_ISSUER, 'Token issuer does not match the configured IdP URL.'));
+            }
         }
 
-        if (config('huwiya.validate_audience', true) && $claims->audience !== config('huwiya.project_id')) {
-            return false;
+        if (config('huwiya.validate_audience', true)) {
+            $expected = config('huwiya.project_id');
+
+            if ($claims->audience === null || $claims->audience !== $expected) {
+                static::log()?->warning('Huwiya: JWT rejected — audience mismatch.', [
+                    'category' => 'claims',
+                    'expected' => $expected,
+                    'got' => $claims->audience,
+                ]);
+
+                return Result::failure(Error::make(TokenRejection::BAD_AUDIENCE, 'Token audience does not match the configured project ID.'));
+            }
         }
 
-        return true;
+        return Result::success($claims);
     }
 
     /**
      * Get the public key for JWT verification by kid.
      *
      * Fetches the JWKS from the IdP and finds the key matching the given kid.
-     * Caches the JWKS for 1 hour. If the kid is not found in cache, busts
-     * the cache and refetches once to handle key rotation.
+     * Caches the JWKS for 1 hour. If the kid is not found in cache, refetches
+     * once under a short cache lock so concurrent requests coalesce into a
+     * single IdP round-trip during key rotation.
+     *
+     * @throws JwksFetchException
+     * @throws UnknownKidException
+     * @throws UnsupportedKeyTypeException
      */
     public static function getPublicKey(string $kid): string
     {
@@ -263,10 +334,7 @@ class Huwiya
             return $pem;
         }
 
-        // Kid not found in cache — bust cache and refetch (key rotation).
-        Cache::forget(static::jwksCacheKey());
-
-        $pem = static::findKeyInCachedJwks($kid);
+        $pem = static::refetchAndFindKey($kid);
 
         if ($pem === null) {
             throw UnknownKidException::forKid($kid);
@@ -276,7 +344,45 @@ class Huwiya
     }
 
     /**
+     * Refetch the JWKS under a cache lock and re-scan for the requested kid.
+     */
+    protected static function refetchAndFindKey(string $kid): ?string
+    {
+        $cacheKey = static::jwksCacheKey();
+
+        $refetch = function () use ($cacheKey, $kid): ?string {
+            Cache::forget($cacheKey);
+
+            return static::findKeyInCachedJwks($kid);
+        };
+
+        try {
+            $lock = Cache::lock($cacheKey.':lock', 10);
+        } catch (\Throwable) {
+            return $refetch();
+        }
+
+        try {
+            return $lock->block(3, function () use ($cacheKey, $kid, $refetch) {
+                // Another worker may have just refreshed the cache — check before refetching.
+                $pem = static::findKeyInCachedJwks($kid);
+
+                if ($pem !== null) {
+                    return $pem;
+                }
+
+                return $refetch();
+            });
+        } catch (\Illuminate\Contracts\Cache\LockTimeoutException) {
+            return $refetch();
+        }
+    }
+
+    /**
      * Find a key by kid in the cached JWKS.
+     *
+     * @throws JwksFetchException
+     * @throws UnsupportedKeyTypeException
      */
     protected static function findKeyInCachedJwks(string $kid): ?string
     {
@@ -285,6 +391,9 @@ class Huwiya
         });
 
         if ($jwks === null) {
+            // Don't poison the cache with a null value.
+            Cache::forget(static::jwksCacheKey());
+
             throw new JwksFetchException('Failed to fetch JWKS from the IdP.');
         }
 
@@ -422,11 +531,8 @@ class Huwiya
 
     /**
      * Set the current user for the application during tests.
-     *
-     * @param  Authenticatable  $user
-     * @return Authenticatable
      */
-    public static function actingAs($user, string $guard = 'web')
+    public static function actingAs(Authenticatable $user, string $guard = 'web'): Authenticatable
     {
         app('auth')->guard($guard)->setUser($user);
         app('auth')->shouldUse($guard);
@@ -437,19 +543,45 @@ class Huwiya
     public static function flush(): void
     {
         app(AuthorizationDeniedCallback::class)->reset();
+
+        static::$cachedLogger = null;
+        static::$cachedLoggerResolved = false;
+    }
+
+    /**
+     * Forward facade calls (which resolve an instance) onto the static API.
+     *
+     * Every public method on `Huwiya` is static — this bridge lets the
+     * `Huwiya` facade resolve `Huwiya::class` as its accessor without a
+     * parallel manager class mirroring every method.
+     *
+     * @param  array<int, mixed>  $arguments
+     */
+    public function __call(string $method, array $arguments): mixed
+    {
+        return static::$method(...$arguments);
     }
 
     /**
      * Resolve the configured log channel, or null if logging is not enabled.
+     *
+     * The channel is resolved once and cached for the lifetime of the process
+     * (cleared via `flush()`). Tests that swap the log channel should call
+     * `Huwiya::flush()` between scenarios.
      */
     public static function log(): ?LoggerInterface
     {
-        $channel = config('huwiya.log_channel');
-
-        if (! is_string($channel) || $channel === '') {
-            return null;
+        if (static::$cachedLoggerResolved) {
+            return static::$cachedLogger;
         }
 
-        return Log::channel($channel);
+        $channel = config('huwiya.log_channel');
+
+        static::$cachedLogger = (is_string($channel) && $channel !== '')
+            ? Log::channel($channel)
+            : null;
+        static::$cachedLoggerResolved = true;
+
+        return static::$cachedLogger;
     }
 }
