@@ -9,41 +9,18 @@ The official Laravel SDK for the [Huwiya](https://huwiya.id) Identity Provider. 
 - **`huwiya-web`** — OAuth 2.0 Authorization Code flow for session-based web applications.
 - **`huwiya-api`** — JWT Bearer authentication for stateless APIs.
 
-## Install
-
-```bash
-composer require hitaqnia/huwiya-laravel
-```
-
-Add credentials to `.env`:
-
-```dotenv
-HUWIYA_PROJECT_ID=your-project-id
-HUWIYA_CLIENT_ID=your-client-id
-HUWIYA_CLIENT_SECRET=your-client-secret
-```
-
-Add the trait to your User model, write your migration using the `huwiyaIdentifier()` macro, register the guard, and wire a login route. Full walkthrough in [docs/getting-started.md](docs/getting-started.md).
-
 ## Documentation
 
-Full documentation lives in the [`docs/`](docs/README.md) directory.
+Full documentation lives in the [`docs/`](docs/00-index.md) directory.
 
-- [Getting started](docs/getting-started.md) — install, migrate, register a guard, start a login.
-- [Configuration](docs/configuration.md) — environment variables and config reference.
-- [Customization](docs/customization.md) — the policy hooks you override on your User model.
-- [Extensions](docs/extensions.md) — recipes for invitations, phone recycling, tenant scoping, role sync.
-- [Events](docs/events.md) — lifecycle events and listener examples.
-- [Errors](docs/errors.md) — the Result pattern, exceptions, and HTTP status codes.
-- [Security](docs/security.md) — security properties and defaults.
-- [Testing](docs/testing.md) — authenticating users in tests.
-
-## Requirements
-
-| Dependency | Version |
-| ---------- | ------- |
-| PHP        | `^8.3`  |
-| Laravel    | `^13.0` |
+- [01 · Getting started](docs/01-getting-started.md) — install, migrate, register a guard, start a login.
+- [02 · Configuration](docs/02-configuration.md) — environment variables and config reference.
+- [03 · Customization](docs/03-customization.md) — the policy hooks you override on your User model.
+- [04 · Extensions](docs/04-extensions.md) — recipes for invitations, phone recycling, tenant scoping, role sync.
+- [05 · Events](docs/05-events.md) — lifecycle events and listener examples.
+- [06 · Errors](docs/06-errors.md) — the Result pattern, exceptions, and HTTP status codes.
+- [07 · Security](docs/07-security.md) — security properties and defaults.
+- [08 · Testing](docs/08-testing.md) — authenticating users in tests.
 
 ## Contributing
 

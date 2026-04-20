@@ -40,7 +40,7 @@ findOrCreateFromHuwiya()
                                            → retry-on-conflict: resolveHuwiyaConflict()
 ```
 
-For decoupled side effects — welcome emails, audit logs, analytics — subscribe to [events](events.md) rather than overriding the model.
+For decoupled side effects — welcome emails, audit logs, analytics — subscribe to [events](05-events.md) rather than overriding the model.
 
 ---
 
@@ -70,7 +70,7 @@ public function shouldAutoRegister(?TokenClaims $claims = null): bool
 
 Customize how a user is resolved from claims. The default matches `huwiya_id`; override to add fallback columns or multi-tenant filters.
 
-See the [extensions](extensions.md) doc for the full invitation-by-phone recipe.
+See the [extensions](04-extensions.md) doc for the full invitation-by-phone recipe.
 
 ### `newHuwiyaQuery(): Builder`
 
@@ -121,7 +121,7 @@ When a create or update fails with a unique-constraint violation on a recyclable
 
 Default behavior: throw `HuwiyaConflictException` (converted to `409 Conflict` by the callback controller).
 
-See [extensions](extensions.md) for the three common policies — delete, detach, and reject with a custom support flow.
+See [extensions](04-extensions.md) for the three common policies — delete, detach, and reject with a custom support flow.
 
 ### `getHuwiyaConflictColumns(): array`
 
@@ -138,5 +138,5 @@ The column storing the Huwiya subject ULID. Default is `'huwiya_id'`. Pair the o
 - **"I want `phone` synced to my users table"** → `getHuwiyaCreateAttributes` + `getHuwiyaUpdateAttributes`
 - **"A phone got reassigned by the telco; handle the collision"** → `resolveHuwiyaConflict`
 - **"I have tenants and need to scope user lookup"** → `newHuwiyaQuery`
-- **"I want to send a welcome email on first login"** → listen to `HuwiyaUserCreated` (see [events](events.md))
+- **"I want to send a welcome email on first login"** → listen to `HuwiyaUserCreated` (see [events](05-events.md))
 - **"I want to assign roles on create"** → override `getHuwiyaCreateAttributes` if it's just columns, or listen to `HuwiyaUserCreated` for anything more involved.

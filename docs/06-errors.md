@@ -85,4 +85,4 @@ The callback route translates every failure class into a generic HTTP status —
 | `429`  | Rate limiter exceeded (default: 30 callbacks per minute per IP).                       |
 | `502`  | Token endpoint unreachable, non-2xx, or returned an unusable token.                    |
 
-Override the rate limit via `config('huwiya.callback_middleware')` — see [configuration](configuration.md).
+Override the rate limit via `config('huwiya.callback_middleware')` — see [configuration](02-configuration.md).

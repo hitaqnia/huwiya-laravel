@@ -31,7 +31,7 @@ HUWIYA_CLIENT_ID=your-client-id
 HUWIYA_CLIENT_SECRET=your-client-secret
 ```
 
-Everything else has a sensible default. See [configuration](configuration.md) for the full list.
+Everything else has a sensible default. See [configuration](02-configuration.md) for the full list.
 
 > The default redirect URI is derived from `APP_URL`. Make sure `APP_URL` matches the host registered with the IdP, or set `HUWIYA_REDIRECT_URI` explicitly.
 
@@ -119,6 +119,6 @@ Register the callback URL with the IdP as an allowed redirect URI and you're don
 
 ## Next steps
 
-- [Customization](customization.md) — what to override on your User model.
-- [Extensions](extensions.md) — patterns for invitations, phone recycling, tenant scoping.
-- [Errors](errors.md) — how the SDK surfaces token rejection and misconfiguration.
+- [Customization](03-customization.md) — what to override on your User model.
+- [Extensions](04-extensions.md) — patterns for invitations, phone recycling, tenant scoping.
+- [Errors](06-errors.md) — how the SDK surfaces token rejection and misconfiguration.
